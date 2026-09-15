@@ -1,0 +1,26 @@
+# Dependencias de Node.js
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-error.log*
+yarn.lock
+
+# Sesiones y Memoria del Agente (Privado)
+.session/
+.session_chat_url.txt
+.session_repo_path.txt
+.session_chats.json
+
+# Archivos temporales y de contexto generados
+contexto_temp.txt
+.contexto_temp.txt
+HISTORIAL_CHAT.md
+historial_chat.md
+
+# Backups de seguridad del parser
+*.bak
+
+# Variables de entorno y SO
+.env
+.DS_Store
+Thumbs.db
