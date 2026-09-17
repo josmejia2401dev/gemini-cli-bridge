@@ -6,7 +6,7 @@ const ignoreDirs = new Set([
   'node_modules', 'vendor', '.venv', 'venv', 'env',
   'target', 'build', 'dist', 'out', '.next', '.nuxt', '.angular',
   '.svelte-kit', '.astro', '.turbo', '.output', '.cache', 'coverage',
-  '.session', 'temp', 'tmp'
+  '.session', 'temp', 'tmp', '.gradle'
 ]);
 
 const ignoreFiles = new Set([

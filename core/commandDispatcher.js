@@ -56,6 +56,10 @@ class CommandDispatcher {
             return { skip: true };
         }
 
+        if (lowerInput.startsWith('/new-repo ')) {
+            return this.handleNewRepo(instructionTrimmed);
+        }
+
         // --- COMANDOS DE AGENTE ---
         const sortedCommands = Object.keys(this.dynamicCommands).sort((a, b) => b.length - a.length);
         let matchedCmd = null;
@@ -71,7 +75,7 @@ class CommandDispatcher {
 Formato obligatorio:
 1. CREAR/MODIFICAR: Usa <<<WRITE: ruta/archivo.ext>>> seguido del código en \`\`\`. CRÍTICO: Provee el CÓDIGO COMPLETO. Prohibido omitir código.
 2. LECTURA: Si necesitas ver uno o varios archivos, pide <<<READ: ruta/1.js, ruta/2.js>>> (separados por coma). El sistema te los enviará empaquetados.
-3. COMANDOS: Usa <<<CMD: tu comando aquí>>>.
+3. COMANDOS: Usa <<<CMD: tu comando aquí>>>. CRÍTICO: El comando dentro de la etiqueta debe ser LITERALMENTE EXACTO a como se ejecuta en la terminal (ejecutable o script al inicio, seguido de subcomandos y argumentos). PROHIBIDO modificar, parafrasear o invertir el orden del comando solicitado por el usuario (Ejemplo correcto: <<<CMD: gradlew.bat clean build>>>, JAMÁS <<<CMD: build clean gradlew.bat>>>), Si el usuario te pide ejecutar un comando específico (ej. "ejecuta gradle clean"), DEBES solicitar EXACTAMENTE ESE MISMO COMANDO LITERAL dentro de la etiqueta <<<CMD: gradle clean>>>, sin agregar, cambiar, actualizar ni reordenar absolutamente nada.
 4. ELIMINAR: <<<DELETE: ruta/archivo.ext>>>
 5. MOVER: <<<MOVE: ruta/origen.ext > ruta/destino.ext>>>
 6. SINCRONIZACIÓN: Si el usuario te indica que tu código está desactualizado, responde ÚNICAMENTE con <<<SYNC_ALL>>>.`;
@@ -85,17 +89,18 @@ Formato obligatorio:
             console.log(`\n  [🚀 Agente Activado: ${matchedCmd}]`);
             finalPrompt = `${globalSystemRules}\n\nPERFIL ASIGNADO: ${expertRolePrompt}\n\n**SOLICITUD DEL USUARIO**\n${cleanInstruction}`;
         } else {
-            finalPrompt = `${globalSystemRules}\n\n**SOLICITUD DEL USUARIO**\n${cleanInstruction}`;
+            // Es una conversación normal, se envía el texto limpio sin reglas adjuntas
+            finalPrompt = cleanInstruction;
         }
 
         return { finalPrompt, skip: false };
     }
 
-showHelp() {
+    showHelp() {
         console.log('\n================================================================================');
         console.log('                             GUÍA DE COMANDOS CLI                               ');
         console.log('================================================================================\n');
-        
+
         console.log('  [COMANDOS DE CHAT (Sesiones)]');
         console.log('  /chat-new              -> Inicia una nueva conversación limpia.');
         console.log('  /chat-save <nombre>    -> Guarda el chat actual con un nombre (ej. /chat-save backend).');
@@ -109,6 +114,7 @@ showHelp() {
         console.log('  /sync-all         -> Sincroniza TODO el repositorio.');
         console.log('  /sync <rutas...>  -> Sincroniza archivos específicos.');
         console.log('  /history          -> Extrae historial a HISTORIAL_CHAT.md.');
+        console.log('  /new-repo <ruta>  -> Cambia el directorio de trabajo del agente a la nueva ruta.');
         console.log('  /exit             -> Cierra la aplicación.\n');
 
         console.log('  [COMANDOS DE AGENTE (commands.json)]');
@@ -118,13 +124,13 @@ showHelp() {
         }
         console.log('\n================================================================================\n');
     }
-    
+
     // =========================================================================
     // MÉTODOS DE SESIÓN DE CHAT
     // =========================================================================
     getSavedChats() {
         if (!fs.existsSync(this.chatsFile)) return {};
-        try { return JSON.parse(fs.readFileSync(this.chatsFile, 'utf-8')); } 
+        try { return JSON.parse(fs.readFileSync(this.chatsFile, 'utf-8')); }
         catch (e) { return {}; }
     }
 
@@ -143,7 +149,7 @@ showHelp() {
     handleChatSave(instruction) {
         const name = instruction.substring(11).trim();
         if (!name) return console.log('  ❌ Debes especificar un nombre: /chat-save <nombre>');
-        
+
         const currentUrl = this.gemini.page.url();
         if (!currentUrl.includes('/app/')) return console.log('  ❌ Aún no hay un hilo de chat activo para guardar. Escribe un mensaje primero.');
 
@@ -157,7 +163,7 @@ showHelp() {
         const chats = this.getSavedChats();
         const keys = Object.keys(chats);
         if (keys.length === 0) return console.log('  ℹ️ No tienes chats guardados.');
-        
+
         console.log('\n  [CHATS GUARDADOS]');
         keys.forEach(k => console.log(`  - ${k}`));
         console.log();
@@ -174,11 +180,11 @@ showHelp() {
         console.log(`  [SISTEMA] Cargando chat "${name}"...`);
         await this.gemini.page.goto(targetUrl);
         await this.gemini.page.waitForTimeout(2000);
-        
+
         // Actualizamos el archivo temporal base para que al reiniciar retome este
         const chatUrlFile = path.join(__dirname, '..', '.session_chat_url.txt');
         fs.writeFileSync(chatUrlFile, targetUrl, 'utf-8');
-        
+
         console.log(`  ✅ Chat "${name}" cargado y listo.`);
     }
 
@@ -201,7 +207,7 @@ showHelp() {
         console.log('  [/upload-files] Subiendo paquete de contexto...');
         const result = createContextFile(this.projectRoot);
         if (result.fileCount > 0) {
-            const prompt = `CARGA DE CONTEXTO:\nLee el archivo adjunto para actualizar tu memoria. NO generes código nuevo. Responde ÚNICAMENTE: **Contexto subido con éxito**.`;
+            const prompt = `CARGA DE CONTEXTO:\nLee el archivo adjunto para actualizar tu memoria con ${result.fileCount} archivos de código. NO generes código nuevo. Responde ÚNICAMENTE: **Contexto de ${result.fileCount} archivos subido con éxito**.`;
             await this.gemini.sendPrompt(prompt, result.tempFilePath);
             console.log('  Contexto subido.\n');
         }
@@ -211,7 +217,7 @@ showHelp() {
         console.log('  [/sync-all] Sincronizando proyecto completo...');
         const result = createContextFile(this.projectRoot);
         if (result.fileCount > 0) {
-            const prompt = `ACTUALIZACIÓN GLOBAL:\nLee el archivo adjunto. NO generes código. Responde: **Sincronización global exitosa**.`;
+            const prompt = `ACTUALIZACIÓN GLOBAL:\nLee el archivo adjunto que contiene ${result.fileCount} archivos. NO generes código. Responde: **Sincronización global de ${result.fileCount} archivos exitosa**.`;
             await this.gemini.sendPrompt(prompt, result.tempFilePath);
             console.log('  Sincronización lista.\n');
         }
@@ -221,11 +227,11 @@ showHelp() {
         const args = instruction.substring(5).trim();
         const filesToSync = args.split(' ').map(f => f.trim()).filter(f => f.length > 0);
         if (filesToSync.length === 0) return console.log('  Especifica al menos un archivo.');
-        
+
         console.log('  [/sync] Sincronizando selección parcial...');
         const result = createPartialContextFile(this.projectRoot, filesToSync);
         if (result.fileCount > 0) {
-            const prompt = `ACTUALIZACIÓN PARCIAL:\nLee el archivo adjunto. NO generes código. Responde: **Sincronización exitosa**.`;
+            const prompt = `ACTUALIZACIÓN PARCIAL:\nLee el archivo adjunto con los ${result.fileCount} archivos solicitados. NO generes código. Responde: **Sincronización de ${result.fileCount} archivos exitosa**.`;
             await this.gemini.sendPrompt(prompt, result.tempFilePath);
             console.log('  Archivos sincronizados.\n');
         }
@@ -237,6 +243,27 @@ showHelp() {
         const historyPath = path.join(this.projectRoot, 'HISTORIAL_CHAT.md');
         fs.writeFileSync(historyPath, historyText, 'utf-8');
         console.log(`  Historial guardado en: ${historyPath}\n`);
+    }
+
+    handleNewRepo(instruction) {
+        const targetPath = instruction.substring(10).trim();
+        if (!targetPath) {
+            console.log('    Debes especificar una ruta: /new-repo <ruta>');
+            return { skip: true };
+        }
+
+        const absPath = path.resolve(targetPath);
+        if (!fs.existsSync(absPath)) {
+            console.log(`    La ruta "${absPath}" no existe en disco.`);
+            return { skip: true };
+        }
+
+        this.projectRoot = absPath;
+        const repoPathFile = path.join(__dirname, '..', '.session_repo_path.txt');
+        fs.writeFileSync(repoPathFile, absPath, 'utf-8');
+        console.log(`  [SISTEMA] Repositorio cambiado exitosamente a: ${absPath}`);
+
+        return { skip: true, newRoot: absPath };
     }
 }
 
