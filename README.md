@@ -1,96 +1,147 @@
-```markdown
-# 🚀 GeminiDev Agent (`gemini-cli-bridge`)
+# 🚀 GeminiDev Agent V2 (`gemini-cli-bridge`)
 
-**GeminiDev Agent** es una herramienta de interfaz de línea de comandos (CLI) desarrollada en Node.js que conecta de forma autónoma la interfaz web de Gemini con el sistema de archivos de tu repositorio local mediante automatización de navegador (Playwright). 
+[![Node.js](https://img.shields.io/badge/Node.js-v18%2B-green.svg)](https://nodejs.org/)
+[![Playwright](https://img.shields.io/badge/Playwright-v1.40%2B-blue.svg)](https://playwright.dev/)
+[![SQLite](https://img.shields.io/badge/SQLite-Better--SQLite3-003B57.svg)](https://www.sqlite.org/)
+[![Architecture](https://img.shields.io/badge/Architecture-V2--JS--Object--Mode-orange.svg)](#-motor-de-ejecución-js-object-mode-v2)
 
-Permite utilizar Gemini como un desarrollador autónomo local capaz de analizar contexto completo o parcial, realizar operaciones CRUD directas en disco duro (creación, edición, renombrado, movimiento y eliminación de archivos con backups automáticos), proponer y ejecutar comandos en terminal, gestionar múltiples sesiones de chat y adoptar perfiles expertos configurables dinámicamente.
+**GeminiDev Agent V2** es una plataforma CLI de automatización autónoma en Node.js que puentea la interfaz web de Gemini con el sistema de archivos de tu repositorio local. 
+
+Concebido bajo una **Arquitectura V2 desacoplada y resiliente**, el agente ejecuta un bucle continuo de toma de decisiones (`PLAN -> EXECUTE -> VERIFY -> REFLECT`), operando bajo el novedoso paradigma **JS Object Mode**, sanitización aislada por **`OutputParser`**, memoria episódica multinivel (**SQLite + LanceDB**) y control estricto de seguridad en tiempo de ejecución.
 
 ---
 
-## 🏗️ Arquitectura del Sistema
+## 🌟 Características Clave
+
+* ⚡ **JS Object Mode (Zero Syntax Errors):** Evaluación segura con `vm.runInNewContext()`. La IA emite objetos JavaScript delimitados por *Template Literals* (backticks `` ` ``), permitiendo la escritura nativa de código multilínea, saltos de línea y comillas internas sin necesidad de escapes propensos a errores.
+* 🛡️ **Escudo Purificador (`OutputParser.js`):** Extractor dedicado que aísla la estructura del objeto `{ tool: "...", arguments: { ... } }` y aniquila mediante Regex cualquier inyección de triples comillas de Markdown (```) o bloques no deseados.
+* 🧠 **Memoria Episódica Activa:** Almacena automáticamente en SQLite los fallos de consola, comandos denegados y feedback humano (`n [motivo]`). Previene la repetición de errores inyectando contexto preventivo en tareas similares.
+* 🔍 **Verifier Sintáctico Pre-Exec:** Analiza las ordenes propuestas antes de tocar la consola. Detiene comandos invertidos (ej. `clean build gradlew.bat`) y bloquea violaciones de *Path Traversal*.
+* 🚦 **Policy Engine & Risk Control:** Evaluación de riesgo en 3 niveles (`LOW`, `MEDIUM`, `HIGH`) con intervención humana explícita `(y/N [motivo])` para operaciones críticas.
+* 🎭 **Catálogo de Agentes Experto (`commands.json`):** Mas de 10 perfiles especializados (`/dev-java`, `/dev-react`, `/devops`, `/refactor`, `/debug`) listos para asumir roles de arquitectura.
+
+---
+
+## 🏗️ Arquitectura del Sistema V2
+
+```text
+                    ┌─────────────────────────┐
+                    │      REPL / CLI         │
+                    └────────────┬────────────┘
+                                 │
+                         ┌───────▼───────┐
+                         │   MAIN ()     │ (bootstrap & error handler)
+                         └───────┬───────┘
+                                 │
+                         ┌───────▼───────┐
+                         │ AGENT RUNTIME │
+                         └───────┬───────┘
+                                 │
+     ┌───────────────────────────┼───────────────────────────┐
+     ▼                           ▼                           ▼
+┌──────────────┐       ┌──────────────────┐        ┌──────────────────┐
+│ MODEL ROUTER │       │  MEMORY ENGINE   │        │  TOOL REGISTRY   │
+└──────┬───────┘       └────────┬─────────┘        └────────┬─────────┘
+       │                        │                           │
+       ▼                        ├── SQLite (Op/Epi/Proc)    ├── OutputParser (JS VM)
+┌────────────────┐              │                           ├── PolicyEngine (Risks)
+│ LLM PROVIDERS  │              └── LanceDB (Semantic)      └── Pre/Post Verifier
+└──────┬─────────┘                                          
+       │
+       ▼
+ ┌───────────────┐
+ │ Playwright/Web│
+ └───────────────┘
+
+```
+
+### 📂 Estructura de Archivos V2
 
 ```text
 gemini-cli-bridge/
-├── index.js                  # Entry point, orquestador y bucle de delegación autónoma.
+├── index.js                  # Entry point con arranque limpio async main() y error handling.
 ├── commands.json             # Catálogo de perfiles expertos (Prompts de Agente).
-├── package.json              # Configuración de dependencias y binario global.
-├── .session_chats.json       # Persistencia de los hilos de chat guardados.
-├── .session_repo_path.txt    # Persistencia de la ruta del repositorio activo.
-├── .session_chat_url.txt     # Persistencia de la URL del chat activo en Gemini.
-├── .session/                 # Datos de sesión persistentes de Chromium (Playwright).
+├── package.json              # Dependencias del proyecto y binario ejecutable global.
+├── ARCHITECTURE_V2.md        # Especificación detallada del diseño de arquitectura.
+├── .agent_data/              # Directorio aislado de estado (SQLite, LanceDB, Sesiones, Logs).
+├── src/
+│   ├── agent/                # AgentRuntime (Loop autónomo), Verifier y Reflector.
+│   ├── config/               # Rutas unificadas del sistema (paths.js).
+│   ├── context/              # Indexador AST, PatternEngine y Context Retriever.
+│   ├── eval/                 # Evaluador sintáctico y conjunto de test cases en JSON.
+│   ├── llm/                  # ModelRouter, GeminiClient y adaptador GeminiPlaywrightProvider.
+│   ├── memory/               # SQLite (Operacional, Episódica, Procedural) y LanceDB.
+│   ├── observability/        # ExecutionLogger (uuid auditables) y MetricsCollector.
+│   ├── schemas/              # Esquemas Zod para la validación estricta de tools.
+│   ├── tools/                # ToolRegistry, PolicyEngine y conector MCP Client.
+│   └── utils/                # OutputParser.js (Parser de objetos JS) y FileScanner.js.
 ├── cli/
-│   └── repl.js               # Gestor interactivo de consola y soporte multilínea (Copy-Paste).
-├── core/
-│   └── commandDispatcher.js  # Enrutador de comandos, gestión de chats e inyección global de reglas.
-├── utils/
-│   ├── fileScanner.js        # Escáner de repositorio, filtros y empaquetador de contexto.
-│   └── codeParser.js         # Parser a prueba de balas para comandos LLM y ejecutor seguro en disco/terminal.
-└── llm/
-    └── geminiClient.js       # Cliente Playwright para automatización de la interfaz web de Gemini.
+│   └── repl.js               # REPL interactivo con captura multilínea (/paste) y SIGINT.
+└── core/
+    └── commandDispatcher.js  # Gestor de perfiles, sesiones de chat e inyector de reglas.
 
 ```
-
-### Componentes Principales
-
-| Componente | Archivo | Responsabilidad |
-| --- | --- | --- |
-| **CLI & Autonomía** | `index.js`, `cli/repl.js` | Inicializa la sesión, captura entrada multilínea e implementa el bucle de autonomía (envío de archivos bajo demanda). |
-| **Enrutador & Reglas** | `core/commandDispatcher.js` | Inyecta las reglas estrictas en cada mensaje, enruta instrucciones del sistema y gestiona las sesiones de chat. |
-| **Browser Engine** | `llm/geminiClient.js` | Controla Chromium persistente vía Playwright, gestiona inyección directa de prompts y extrae respuestas limpias. |
-| **File Scanner** | `utils/fileScanner.js` | Filtra el proyecto mediante reglas estrictas, genera inventarios y crea paquetes de contexto `.txt`. |
-| **Code Parser** | `utils/codeParser.js` | Analiza respuestas buscando etiquetas de acción, bloquea daños por merge destructivo y ejecuta comandos. |
 
 ---
 
-## 📜 Protocolo de Autonomía y Archivos (LLM Tags)
+## ⚡ Motor de Ejecución JS Object Mode V2
 
-El motor de ejecución (`codeParser.js`) dota a la IA de herramientas para investigar el entorno, ejecutar acciones y modificar el código. Monitorea las siguientes etiquetas:
+A diferencia de los parsers rígidos basados en JSON plano o regex volátiles, el **Agent Runtime V2** exige a Gemini respuestas en formato de objetos nativos de JavaScript evaluados mediante `vm.runInNewContext()`:
 
-### 1. Lectura Autónoma (`<<<READ>>>`)
+```javascript
+{
+  tool: "write_file",
+  arguments: {
+    filePath: `src/main/java/com/example/cache/CacheService.java`,
+    content: `package com.example.cache;
 
-La IA puede solicitar leer uno o más archivos físicos si le falta contexto. El sistema los empaqueta y se los envía automáticamente en segundo plano.
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.stereotype.Service;
 
-```text
-<<<READ: package.json src/app.js,>>>
-
-```
-
-### 2. Sincronización Autónoma (`<<<SYNC_ALL>>>`)
-
-Si la IA detecta que está trabajando a ciegas, puede solicitar una sincronización global. El sistema enviará el repositorio completo actualizado.
-
-```text
-<<<SYNC_ALL>>>
-
-```
-
-### 3. Ejecución de Comandos (`<<<CMD>>>`)
-
-La IA puede proponer comandos de terminal. El sistema pedirá confirmación explícita al usuario (y/N) antes de ejecutar y le devolverá el resultado (log) a la IA.
-
-```text
-<<<CMD: axios install npm>>>
+@Service
+public class CacheService {
+    @Cacheable(value = "portfolio", key = "#id")
+    public String getPortfolioData(String id) {
+        return "Data for portfolio with id: " + id;
+    }
+}`
+  }
+}
 
 ```
 
-### 4. Creación y Edición Estricta (`<<<WRITE>>>` / `<<<FILE>>>`)
+### 🛡️ El Módulo `OutputParser.js`
 
-Sobrescribe o crea el archivo especificado bajo la **regla Zero-Merge**. La IA está obligada a generar el código **absolutamente completo**. Si el archivo ya existe localmente, se genera automáticamente una copia de seguridad (`.bak`).
+El parseo se delega completamente a `src/utils/outputParser.js`, el cual:
 
-```text
-<<<WRITE: src/controllers/user.ts>>>
-```typescript
-// Código completo aquí
+1. Aisla la cadena desde el primer `{` hasta el último `}`.
+2. Aplica el regex `/```[a-zA-Z0-9_-]*/g` para destruir cualquier bloque Markdown residual.
+3. Transforma la cadena en un objeto JavaScript vivo sin romper los saltos de línea de los *Template Literals* (```).
 
-```
+---
 
-### 5. Modificación Estructural (`<<<MOVE>>>` y `<<<DELETE>>>`)
+## 🧠 Sistema de Memoria Persistente (SQLite & LanceDB)
 
-Renombra, mueve (creando carpetas intermedias) o elimina forzosamente directorios y archivos.
+La persistencia del agente se almacena dentro de `.agent_data/memory.db` (SQLite) y `.agent_data/lancedb/` (Vectorial):
 
-```text
-<<<MOVE: src/old.ts > src/new.ts>>>
-<<<DELETE: src/legacy/file.js>>>
+| Tipo de Memoria | Componente | Responsabilidad |
+| --- | --- | --- |
+| **Operacional** | `OperationalMemory` | Rastrea el estado de la tarea actual (`taskId`, `goal`, pasos, archivos modificados). |
+| **Episódica** | `EpisodicMemory` | Registra errores de terminal, bloqueos del `Verifier` y observaciones `n [motivo]`. |
+| **Procedural** | `ProceduralMemory` | Guarda flujos de trabajo eficientes aprendidos para tareas repetitivas. |
+| **Semántica** | `SemanticMemory` | LanceDB embebido para búsqueda vectorial por similitud conceptual de errores. |
+
+### 🔍 Inspección en Tiempo Real de la Memoria Episódica
+
+Puedes ejecutar este script directamente en la raíz para auditar qué ha aprendido tu agente:
+
+```bash
+node -e "
+  const Database = require('better-sqlite3');
+  const db = new Database('./.agent_data/memory.db');
+  console.log('\n--- 🧠 MEMORIA EPISÓDICA (Lecciones Aprendidas) ---');
+  console.table(db.prepare('SELECT id, command, error_output, user_feedback FROM episodic_memory ORDER BY id DESC LIMIT 5').all());
+"
 
 ```
 
@@ -98,68 +149,96 @@ Renombra, mueve (creando carpetas intermedias) o elimina forzosamente directorio
 
 ## 🛠️ Catálogo de Comandos CLI
 
-El sistema clasifica las instrucciones ingresadas en la consola interactiva en tres categorías. El enrutador es tolerante a errores de escritura (acepta formatos con y sin guion).
-
-### 1. Comandos de Chat (Gestión de Sesiones)
-
-Permite tener múltiples hilos de conversación guardados (ej. uno para frontend, otro para backend).
+### 💬 Comandos de Chat (Sesiones)
 
 | Comando | Descripción |
 | --- | --- |
-| `/chat-new` | Limpia el contexto y abre un chat nuevo en Gemini. |
-| `/chat-save <nombre>` | Guarda el hilo actual bajo un identificador (ej. `/chat-save modulo-pagos`). |
-| `/chat-list` | Muestra todos los chats guardados en `.session_chats.json`. |
+| `/chat-new` | Inicia una conversación limpia en Gemini Web. |
+| `/chat-save <nombre>` | Guarda el hilo activo en `saved_chats.json` (ej. `/chat-save sprint-4`). |
+| `/chat-list` | Muestra todos los chats guardados. |
 | `/chat-load <nombre>` | Cambia el navegador inmediatamente al chat seleccionado. |
-| `/chat-delete <nombre>` | Elimina un chat de la lista de guardados. |
+| `/chat-delete <nombre>` | Elimina un chat de la lista guardada. |
 
-### 2. Comandos de Sistema
-
-Procesados internamente por Node.js.
+### ⚙️ Comandos de Sistema y Contexto
 
 | Comando | Descripción |
 | --- | --- |
-| `/help` | Muestra la guía completa de comandos CLI. |
-| `/paste` | Activa el modo multilínea, ideal para pegar cientos de líneas de código o logs de error sin crashear Node. |
-| `/upload-files` | Empaqueta y sube todo el contexto local explícitamente. |
-| `/sync <rutas>` | Sincroniza únicamente los archivos indicados. (ej. `/sync src/app.js`) |
-| `/history` | Extrae el historial y genera `HISTORIAL_CHAT.md`. |
-| `/exit` | Cierra Chromium y el proceso de Node.js. |
+| `/paste` | Activa el modo multilínea. Finaliza enviando `.send` en una nueva línea. |
+| `/reload-rules` | Reinyecta las directrices del **JS Object Mode** en el chat activo. |
+| `/upload-files [texto]` | Empaqueta el repositorio y lo sube como archivo de contexto `.txt`. |
+| `/sync-all [texto]` | Fuerza la sincronización total de código y evalúa la instrucción. |
+| `/sync <rutas...>` | Sincroniza únicamente los archivos especificados (ej. `/sync src/app.js`). |
+| `/history` | Extrae el historial del chat actual y genera `HISTORIAL_CHAT.md`. |
+| `/new-repo <ruta>` | Cambia el repositorio objetivo de trabajo en caliente. |
+| `/help` | Muestra la guía interactiva de comandos en la terminal. |
+| `/exit` | Cierra Chromium y finaliza el proceso de Node.js de forma segura. |
 
-### 3. Comandos de Agente (`commands.json`)
+### 🎭 Perfiles de Agente Experto (`commands.json`)
 
-Inyectan un perfil experto específico antes de tu consulta.
+Para activar un perfil experto, antepone el comando a tu instrucción:
 
-* `/dev`: Agente Full-Stack genérico.
-* `/dev-node`, `/dev-react`, `/dev-angular`, `/dev-java`: Perfiles especializados.
-* `/devops`, `/refactor`, `/review`, `/test-node`, `/test-java`: Perfiles de operaciones, QA y arquitectura.
-
-> **💡 Modo Chat Normal:** Si escribes un mensaje normal (sin comandos), el sistema aplicará silenciosamente las reglas de seguridad y autonomía globales para garantizar que la IA mantenga su comportamiento seguro, sin imponerle un rol específico.
+* `/dev` - Desarrollador Full-Stack Senior (SOLID, KISS, DRY).
+* `/dev-java` - Arquitecto Java 21+ & Spring Boot 3+.
+* `/dev-java-webflux` - Especialista en Spring WebFlux 100% Reactivo y no bloqueante.
+* `/dev-java-webflux-hexagonal` - Java Reactivo en Arquitectura Hexagonal y DDD.
+* `/dev-node` - Experto en Node.js, Express y Clean Architecture.
+* `/dev-react` / `/dev-angular` - Tech Leads Frontend (Signals, Standalone, Custom Hooks).
+* `/devops` - SRE/DevOps especialista en Docker multi-stage, K8s y CI/CD.
+* `/refactor` - Refactorización purista de código sin cambio de comportamiento.
+* `/review` - Auditoría estática de seguridad (OWASP) de **solo lectura**.
+* `/debug` - Troubleshooting, lecturas de stacktraces y RCA (Root Cause Analysis).
+* `/test-java` / `/test-node` - Ingenieros SDET especializados en JUnit 5, Mockito y Jest.
 
 ---
 
-## 📂 Reglas del Escáner de Archivos (`fileScanner.js`)
+## 💡 Ejemplos de Uso en la CLI
 
-Para optimizar tokens, el escáner ignora directorios pesados (`node_modules`, `.git`, `dist`, `.next`, etc.) y solo empaqueta extensiones válidas de desarrollo web, backend, estilos, configuraciones e infraestructura (`.js`, `.ts`, `.html`, `.css`, `.py`, `.java`, `Dockerfile`, `package.json`, etc.).
+### 1. Refactorización Segura con Perfil Experto
 
----
-
-## ⚡ Instalación y Configuración Global
-
-1. Clona o ubícate en la carpeta del proyecto `gemini-cli-bridge`:
-
-```bash
-cd /ruta/de/tu/proyecto/gemini-cli-bridge
+```text
+GeminiDev V2 > /refactor optimiza la clase CacheService eliminando redundancias sin alterar el comportamiento.
 
 ```
 
-2. Instala las dependencias y los binarios de Playwright:
+### 2. Pegar Stacktraces Largos (`/paste`)
+
+```text
+GeminiDev V2 > /paste
+  [MODO MULTILÍNEA ACTIVADO]
+  > Pega todo tu texto, código o logs.
+  > Cuando termines, escribe ".send" en una nueva línea y presiona Enter.
+
+  /dev-java-webflux Corrige este error en el pipeline reactivo:
+  java.lang.IllegalStateException: block()/blockFirst()/blockLast() are blocking
+  at reactor.core.publisher.Mono.block(Mono.java:1738)
+  at com.example.service.UserService.getUser(UserService.java:45)
+  .send
+
+```
+
+### 3. Reinyectar Reglas en Chats Retomados
+
+```text
+GeminiDev V2 > /reload-rules
+  [/reload-rules] Inyectando reglas actualizadas en el chat activo...
+  ✅ Reglas actualizadas en memoria.
+
+```
+
+---
+
+## 📦 Instalación y Configuración
+
+### 1. Clonar e Instalar Dependencias
 
 ```bash
+git clone [https://github.com/tu-usuario/gemini-cli-bridge.git](https://github.com/tu-usuario/gemini-cli-bridge.git)
+cd gemini-cli-bridge
 npm install
 
 ```
 
-3. Enlaza el paquete de forma global:
+### 2. Vincular Binario Globalmente
 
 ```bash
 npm link
@@ -168,15 +247,21 @@ npm link
 
 *(En sistemas Linux/macOS puede requerir `sudo npm link`)*.
 
----
+### 3. Iniciar el Agente
 
-## 🛡️ Medidas de Seguridad y Robustez (Architect Level)
+Apunta el agente a cualquier repositorio local de tu máquina:
 
-1. **Protección Anti-Alucinaciones (Zero-Merge):** Si el parser detecta que la IA intentó escribir un archivo de forma incompleta (ej. un fragmento muy corto para un archivo grande), el sistema bloquea la sobreescritura, aborta la operación y reprende a la IA automáticamente obligándola a reescribir el código íntegro.
-2. **Delegación Orientada a Eventos:** La IA no actúa a ciegas; si carece de contexto, usa etiquetas de lectura para que el bucle de Node.js extraiga el código real del disco y se lo envíe antes de proceder.
-3. **Aislamiento de Entorno (`isSafePath`):** Bloquea cualquier intento de Path Traversal asegurando que el agente solo interactúe dentro de `projectRoot`.
-4. **Sandboxing de Terminal:** Todo uso de `<<<CMD>>>` pausa el hilo y exige la autorización humana expresa (y/N) antes de interactuar con el SO.
+```bash
+gemini-cli-bridge /ruta/a/tu/proyecto
 
 ```
+
+---
+
+## 🛡️ Protocolos de Seguridad (Architect Level)
+
+1. **Path Traversal Shield (`isSafePath`):** Bloquea cualquier intento del LLM de leer o escribir fuera de la raíz del proyecto (`projectRoot`).
+2. **Standard Execution Environment (`execSync`):** Todos los comandos ejecutados por la herramienta `execute_command` se aíslan en el `cwd` del repositorio del usuario.
+3. **Control de Interrupción Sigint (`Ctrl + C`):** Interrumpe de forma limpia la generación de respuesta del navegador mediante Playwright (`stopGeneration()`) sin cerrar el proceso principal del CLI.
 
 ```

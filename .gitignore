@@ -10,6 +10,7 @@ yarn.lock
 .session_chat_url.txt
 .session_repo_path.txt
 .session_chats.json
+.agent_data
 
 # Archivos temporales y de contexto generados
 contexto_temp.txt

@@ -1,14 +1,54 @@
 const fs = require('fs');
 const path = require('path');
 const { createContextFile, createPartialContextFile } = require('../utils/fileScanner');
+const paths = require('../config/paths');
 
 class CommandDispatcher {
     constructor(geminiClient, projectRoot, dynamicCommands) {
         this.gemini = geminiClient;
         this.projectRoot = projectRoot;
         this.dynamicCommands = dynamicCommands;
-        // Archivo para guardar la memoria de los chats
-        this.chatsFile = path.join(__dirname, '..', '.session_chats.json');
+        this.chatsFile = paths.SAVED_CHATS_FILE;
+    }
+
+    getGlobalRules() {
+        return `[SISTEMA DE HERRAMIENTAS - JS OBJECT MODE OBLIGATORIO]
+Si la solicitud requiere ejecutar comandos, crear, modificar o leer archivos, DEBES responder EXCLUSIVAMENTE con un Objeto de JavaScript válido.
+NO uses Python, NO uses scripts de ejecución interna.
+
+ESTRUCTURA JS REQUERIDA (Usa backticks \` para TODOS los valores de texto, esto evitará errores de comillas anidadas):
+
+1. Para ejecutar comandos (Usa BACKTICKS):
+{
+  tool: "execute_command",
+  arguments: {
+    command: \`git commit -m "mensaje"\`
+  }
+}
+
+2. Para escribir/editar archivos (Usa BACKTICKS para el contenido):
+{
+  tool: "write_file",
+  arguments: {
+    filePath: "src/app.java",
+    content: \`package com.example;
+    
+    @Cacheable(value = "portfolio")
+    public class CacheService {
+        // Todo tu código con saltos de línea y comillas dobles sin escapar
+    }\`
+  }
+}
+
+3. Para leer archivos:
+{
+  tool: "read_files",
+  arguments: {
+    paths: ["package.json"]
+  }
+}
+
+Si es una consulta puramente teórica o de explicación, responde en texto plano. Si requiere acción, responde ÚNICAMENTE con el Objeto JS de la herramienta.`;
     }
 
     async dispatch(instruction, repl) {
@@ -24,9 +64,9 @@ class CommandDispatcher {
         if (lowerInput.startsWith('/chat-delete ')) { this.handleChatDelete(instructionTrimmed); return { skip: true }; }
 
         // --- COMANDOS DE SISTEMA ---
-        if (lowerInput === '/exit' || lowerInput.startsWith('/exit ')) {
+        if (lowerInput === '/exit' || lowerInput === 'exit' || lowerInput.startsWith('/exit ') || lowerInput.startsWith('exit ')) {
             console.log('  Cerrando sesión y saliendo...');
-            await this.gemini.close();
+            try { await this.gemini.close(); } catch (e) { }
             repl.close();
             process.exit(0);
         }
@@ -36,28 +76,33 @@ class CommandDispatcher {
             return { skip: true };
         }
 
-        if (lowerInput.startsWith('/upload-files')) {
-            await this.handleUploadFiles();
-            return { skip: true };
-        }
-
         if (lowerInput === '/history' || lowerInput === '/historial') {
             await this.handleHistory();
             return { skip: true };
         }
 
-        if (lowerInput === '/sync-all') {
-            await this.handleSyncAll();
+        if (lowerInput.startsWith('/new-repo ')) {
+            return this.handleNewRepo(instructionTrimmed);
+        }
+
+        // --- COMANDO NUEVO: RECARGAR REGLAS ---
+        if (lowerInput === '/reload-rules') {
+            await this.handleReloadRules();
             return { skip: true };
+        }
+
+        // --- COMANDOS CON SOPORTE PARA TEXTO ADICIONAL ---
+        if (lowerInput.startsWith('/upload-files')) {
+            return await this.handleUploadFiles(instructionTrimmed);
+        }
+
+        if (lowerInput.startsWith('/sync-all')) {
+            return await this.handleSyncAll(instructionTrimmed);
         }
 
         if (lowerInput.startsWith('/sync ')) {
             await this.handleSyncPartial(instructionTrimmed);
             return { skip: true };
-        }
-
-        if (lowerInput.startsWith('/new-repo ')) {
-            return this.handleNewRepo(instructionTrimmed);
         }
 
         // --- COMANDOS DE AGENTE ---
@@ -70,16 +115,6 @@ class CommandDispatcher {
             }
         }
 
-        // --- REGLAS GLOBALES (Autonomía Permanente) ---
-        const globalSystemRules = `REGLA ESTRICTA: Eres un Agente Autónomo con acceso al sistema de archivos.
-Formato obligatorio:
-1. CREAR/MODIFICAR: Usa <<<WRITE: ruta/archivo.ext>>> seguido del código en \`\`\`. CRÍTICO: Provee el CÓDIGO COMPLETO. Prohibido omitir código.
-2. LECTURA: Si necesitas ver uno o varios archivos, pide <<<READ: ruta/1.js, ruta/2.js>>> (separados por coma). El sistema te los enviará empaquetados.
-3. COMANDOS: Usa <<<CMD: tu comando aquí>>>. CRÍTICO: El comando dentro de la etiqueta debe ser LITERALMENTE EXACTO a como se ejecuta en la terminal (ejecutable o script al inicio, seguido de subcomandos y argumentos). PROHIBIDO modificar, parafrasear o invertir el orden del comando solicitado por el usuario (Ejemplo correcto: <<<CMD: gradlew.bat clean build>>>, JAMÁS <<<CMD: build clean gradlew.bat>>>), Si el usuario te pide ejecutar un comando específico (ej. "ejecuta gradle clean"), DEBES solicitar EXACTAMENTE ESE MISMO COMANDO LITERAL dentro de la etiqueta <<<CMD: gradle clean>>>, sin agregar, cambiar, actualizar ni reordenar absolutamente nada.
-4. ELIMINAR: <<<DELETE: ruta/archivo.ext>>>
-5. MOVER: <<<MOVE: ruta/origen.ext > ruta/destino.ext>>>
-6. SINCRONIZACIÓN: Si el usuario te indica que tu código está desactualizado, responde ÚNICAMENTE con <<<SYNC_ALL>>>.`;
-
         let cleanInstruction = instructionTrimmed;
         let finalPrompt = '';
 
@@ -87,9 +122,8 @@ Formato obligatorio:
             cleanInstruction = instructionTrimmed.substring(matchedCmd.length).trim();
             const expertRolePrompt = this.dynamicCommands[matchedCmd].prompt;
             console.log(`\n  [🚀 Agente Activado: ${matchedCmd}]`);
-            finalPrompt = `${globalSystemRules}\n\nPERFIL ASIGNADO: ${expertRolePrompt}\n\n**SOLICITUD DEL USUARIO**\n${cleanInstruction}`;
+            finalPrompt = `${this.getGlobalRules()}\n\nPERFIL ASIGNADO: ${expertRolePrompt}\n\n**SOLICITUD DEL USUARIO**\n${cleanInstruction}`;
         } else {
-            // Es una conversación normal, se envía el texto limpio sin reglas adjuntas
             finalPrompt = cleanInstruction;
         }
 
@@ -103,31 +137,38 @@ Formato obligatorio:
 
         console.log('  [COMANDOS DE CHAT (Sesiones)]');
         console.log('  /chat-new              -> Inicia una nueva conversación limpia.');
-        console.log('  /chat-save <nombre>    -> Guarda el chat actual con un nombre (ej. /chat-save backend).');
+        console.log('  /chat-save <nombre>    -> Guarda el chat actual con un nombre.');
         console.log('  /chat-list             -> Muestra todos los chats guardados.');
         console.log('  /chat-load <nombre>    -> Retoma un chat guardado.');
         console.log('  /chat-delete <nombre>  -> Elimina un chat de la lista.\n');
 
         console.log('  [COMANDOS DE SISTEMA]');
-        console.log('  /paste            -> Activa modo multilínea para pegar grandes bloques de texto.');
-        console.log('  /upload-files     -> Genera contexto_temp.txt y lo sube formalmente a Gemini.');
-        console.log('  /sync-all         -> Sincroniza TODO el repositorio.');
-        console.log('  /sync <rutas...>  -> Sincroniza archivos específicos.');
-        console.log('  /history          -> Extrae historial a HISTORIAL_CHAT.md.');
-        console.log('  /new-repo <ruta>  -> Cambia el directorio de trabajo del agente a la nueva ruta.');
-        console.log('  /exit             -> Cierra la aplicación.\n');
+        console.log('  /paste                 -> Activa modo multilínea para bloques de texto.');
+        console.log('  /upload-files [texto]  -> Genera contexto y ejecuta instrucciones.');
+        console.log('  /sync-all [texto]      -> Sincroniza TODO el repositorio.');
+        console.log('  /sync <rutas...>       -> Sincroniza archivos específicos.');
+        console.log('  /history               -> Extrae historial a HISTORIAL_CHAT.md.');
+        console.log('  /new-repo <ruta>       -> Cambia el directorio de trabajo.');
+        console.log('  /reload-rules          -> Fuerza a la IA a recordar las reglas del JS Object Mode.');
+        console.log('  /exit                  -> Cierra la aplicación.\n');
 
         console.log('  [COMANDOS DE AGENTE (commands.json)]');
         for (const [cmd, data] of Object.entries(this.dynamicCommands)) {
-            const paddedCmd = cmd.padEnd(16, ' ');
+            const paddedCmd = cmd.padEnd(20, ' ');
             console.log(`  ${paddedCmd} -> ${data.description}`);
         }
         console.log('\n================================================================================\n');
     }
 
-    // =========================================================================
-    // MÉTODOS DE SESIÓN DE CHAT
-    // =========================================================================
+    // --- NUEVA FUNCIÓN: RELOAD RULES ---
+    async handleReloadRules() {
+        console.log('  [/reload-rules] Inyectando reglas actualizadas en el chat activo...');
+        const reloadPrompt = `[SISTEMA: ACTUALIZACIÓN DE REGLAS]\nA partir de este momento, se aplican las siguientes reglas obligatorias para nuestras interacciones:\n\n${this.getGlobalRules()}\n\nPor favor, responde ÚNICAMENTE diciendo: "✓ Reglas actualizadas. Operando en JS Object Mode."`;
+
+        await this.gemini.sendPrompt(reloadPrompt);
+        console.log('  ✅ Reglas actualizadas en memoria.\n');
+    }
+
     getSavedChats() {
         if (!fs.existsSync(this.chatsFile)) return {};
         try { return JSON.parse(fs.readFileSync(this.chatsFile, 'utf-8')); }
@@ -140,9 +181,15 @@ Formato obligatorio:
 
     async handleChatNew() {
         console.log('  [SISTEMA] Iniciando un nuevo chat...');
-        // Navega a la URL base para forzar un chat limpio
         await this.gemini.page.goto('https://gemini.google.com/app');
         await this.gemini.page.waitForTimeout(2000);
+
+        if (fs.existsSync(this.chatsFile)) {
+            const chatUrlFile = path.join(__dirname, '..', '.agent_data', 'chat_url.txt');
+            if (fs.existsSync(chatUrlFile)) {
+                try { fs.unlinkSync(chatUrlFile); } catch (e) { }
+            }
+        }
         console.log('  ✅ Chat nuevo listo.');
     }
 
@@ -151,7 +198,7 @@ Formato obligatorio:
         if (!name) return console.log('  ❌ Debes especificar un nombre: /chat-save <nombre>');
 
         const currentUrl = this.gemini.page.url();
-        if (!currentUrl.includes('/app/')) return console.log('  ❌ Aún no hay un hilo de chat activo para guardar. Escribe un mensaje primero.');
+        if (!currentUrl.includes('/app/')) return console.log('  ❌ Aún no hay un hilo activo.');
 
         const chats = this.getSavedChats();
         chats[name] = currentUrl;
@@ -171,18 +218,17 @@ Formato obligatorio:
 
     async handleChatLoad(instruction) {
         const name = instruction.substring(11).trim();
-        if (!name) return console.log('  ❌ Debes especificar un nombre: /chat-load <nombre>');
+        if (!name) return console.log('  ❌ Debes especificar un nombre.');
 
         const chats = this.getSavedChats();
         const targetUrl = chats[name];
-        if (!targetUrl) return console.log(`  ❌ No se encontró ningún chat con el nombre "${name}".`);
+        if (!targetUrl) return console.log(`  ❌ No se encontró el chat "${name}".`);
 
         console.log(`  [SISTEMA] Cargando chat "${name}"...`);
         await this.gemini.page.goto(targetUrl);
         await this.gemini.page.waitForTimeout(2000);
 
-        // Actualizamos el archivo temporal base para que al reiniciar retome este
-        const chatUrlFile = path.join(__dirname, '..', '.session_chat_url.txt');
+        const chatUrlFile = path.join(__dirname, '..', '.agent_data', 'chat_url.txt');
         fs.writeFileSync(chatUrlFile, targetUrl, 'utf-8');
 
         console.log(`  ✅ Chat "${name}" cargado y listo.`);
@@ -190,7 +236,7 @@ Formato obligatorio:
 
     handleChatDelete(instruction) {
         const name = instruction.substring(13).trim();
-        if (!name) return console.log('  ❌ Debes especificar un nombre: /chat-delete <nombre>');
+        if (!name) return console.log('  ❌ Debes especificar un nombre.');
 
         const chats = this.getSavedChats();
         if (!chats[name]) return console.log(`  ❌ El chat "${name}" no existe.`);
@@ -200,27 +246,40 @@ Formato obligatorio:
         console.log(`  ✅ Chat "${name}" eliminado.`);
     }
 
-    // =========================================================================
-    // MÉTODOS DE SISTEMA EXISTENTES
-    // =========================================================================
-    async handleUploadFiles() {
+    async handleUploadFiles(instruction) {
+        const userMessage = instruction.substring('/upload-files'.length).trim();
         console.log('  [/upload-files] Subiendo paquete de contexto...');
         const result = createContextFile(this.projectRoot);
+
         if (result.fileCount > 0) {
-            const prompt = `CARGA DE CONTEXTO:\nLee el archivo adjunto para actualizar tu memoria con ${result.fileCount} archivos de código. NO generes código nuevo. Responde ÚNICAMENTE: **Contexto de ${result.fileCount} archivos subido con éxito**.`;
+            const prompt = `[SISTEMA: CARGA DE CONTEXTO]\nSe adjunta el código fuente con ${result.fileCount} archivos. Actualiza tu memoria. NO ejecutes herramientas. Responde ÚNICAMENTE: "Contexto cargado exitosamente."`;
             await this.gemini.sendPrompt(prompt, result.tempFilePath);
-            console.log('  Contexto subido.\n');
+            console.log('  Contexto subido exitosamente.\n');
+
+            if (userMessage) {
+                console.log(`  [SISTEMA] Evaluando solicitud adicional: "${userMessage}"`);
+                return { finalPrompt: userMessage, skip: false };
+            }
         }
+        return { skip: true };
     }
 
-    async handleSyncAll() {
+    async handleSyncAll(instruction) {
+        const userMessage = instruction.substring('/sync-all'.length).trim();
         console.log('  [/sync-all] Sincronizando proyecto completo...');
         const result = createContextFile(this.projectRoot);
+
         if (result.fileCount > 0) {
-            const prompt = `ACTUALIZACIÓN GLOBAL:\nLee el archivo adjunto que contiene ${result.fileCount} archivos. NO generes código. Responde: **Sincronización global de ${result.fileCount} archivos exitosa**.`;
+            const prompt = `[SISTEMA: ACTUALIZACIÓN GLOBAL]\nSe adjunta la estructura completa con ${result.fileCount} archivos. Actualiza tu memoria. NO ejecutes herramientas en esta respuesta. Responde ÚNICAMENTE: "Sincronización global exitosa."`;
             await this.gemini.sendPrompt(prompt, result.tempFilePath);
             console.log('  Sincronización lista.\n');
+
+            if (userMessage) {
+                console.log(`  [SISTEMA] Evaluando solicitud adicional: "${userMessage}"`);
+                return { finalPrompt: userMessage, skip: false };
+            }
         }
+        return { skip: true };
     }
 
     async handleSyncPartial(instruction) {
@@ -231,7 +290,7 @@ Formato obligatorio:
         console.log('  [/sync] Sincronizando selección parcial...');
         const result = createPartialContextFile(this.projectRoot, filesToSync);
         if (result.fileCount > 0) {
-            const prompt = `ACTUALIZACIÓN PARCIAL:\nLee el archivo adjunto con los ${result.fileCount} archivos solicitados. NO generes código. Responde: **Sincronización de ${result.fileCount} archivos exitosa**.`;
+            const prompt = `[SISTEMA: ACTUALIZACIÓN PARCIAL]\nSe adjuntan ${result.fileCount} archivo(s) actualizado(s). Sincroniza tu memoria. Responde ÚNICAMENTE: "Sincronización parcial exitosa."`;
             await this.gemini.sendPrompt(prompt, result.tempFilePath);
             console.log('  Archivos sincronizados.\n');
         }
@@ -259,9 +318,9 @@ Formato obligatorio:
         }
 
         this.projectRoot = absPath;
-        const repoPathFile = path.join(__dirname, '..', '.session_repo_path.txt');
+        const repoPathFile = path.join(__dirname, '..', '.agent_data', 'repo_path.txt');
         fs.writeFileSync(repoPathFile, absPath, 'utf-8');
-        console.log(`  [SISTEMA] Repositorio cambiado exitosamente a: ${absPath}`);
+        console.log(`  [SISTEMA] Repositorio cambiado a: ${absPath}`);
 
         return { skip: true, newRoot: absPath };
     }

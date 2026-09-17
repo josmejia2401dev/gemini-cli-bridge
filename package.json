@@ -13,6 +13,10 @@
     "link": "npm link"
   },
   "dependencies": {
-    "playwright": "^1.63.0"
+    "playwright": "^1.63.0",
+    "zod": "4.6.5",
+    "better-sqlite3": "13.0.3",
+    "@lancedb/lancedb": "0.38.0",
+    "@modelcontextprotocol/sdk": "1.30.0"
   }
 }

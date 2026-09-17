@@ -7,7 +7,14 @@ class REPL {
     }
 
     async askQuestion(prompt) {
-        return await this.rl.question(prompt);
+        try {
+            return await this.rl.question(prompt);
+        } catch (err) {
+            if (err.name === 'AbortError' || err.code === 'ABORT_ERR') {
+                return ''; // Retorna vacío de forma segura si el usuario interrumpe la entrada
+            }
+            throw err;
+        }
     }
 
     async askMultiline() {
