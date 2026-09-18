@@ -1,7 +1,8 @@
 {
   "name": "gemini-cli-bridge",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "description": "CLI Bridge para automatizar modificaciones de código local vía Gemini Web",
+  "author": "Jose Mejia",
   "main": "index.js",
   "type": "commonjs",
   "bin": {
@@ -13,10 +14,8 @@
     "link": "npm link"
   },
   "dependencies": {
-    "playwright": "^1.63.0",
-    "zod": "4.6.5",
     "better-sqlite3": "13.0.3",
-    "@lancedb/lancedb": "0.38.0",
-    "@modelcontextprotocol/sdk": "1.30.0"
+    "playwright": "^1.63.0",
+    "zod": "4.6.5"
   }
 }

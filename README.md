@@ -1,163 +1,146 @@
-# 🚀 GeminiDev Agent V2 (`gemini-cli-bridge`)
+# 🚀 GeminiDev Agent V3 (`gemini-cli-bridge`)
 
 [![Node.js](https://img.shields.io/badge/Node.js-v18%2B-green.svg)](https://nodejs.org/)
 [![Playwright](https://img.shields.io/badge/Playwright-v1.40%2B-blue.svg)](https://playwright.dev/)
 [![SQLite](https://img.shields.io/badge/SQLite-Better--SQLite3-003B57.svg)](https://www.sqlite.org/)
-[![Architecture](https://img.shields.io/badge/Architecture-V2--JS--Object--Mode-orange.svg)](#-motor-de-ejecución-js-object-mode-v2)
+[![Architecture](https://img.shields.io/badge/Architecture-V3--Clean--Layered-orange.svg)](#-arquitectura-del-sistema-v3)
 
-**GeminiDev Agent V2** es una plataforma CLI de automatización autónoma en Node.js que puentea la interfaz web de Gemini con el sistema de archivos de tu repositorio local. 
+**GeminiDev Agent V3** es una plataforma CLI autónoma de Ingeniería de Software en Node.js que conecta la interfaz web de Gemini con el sistema de archivos local de tu repositorio.
 
-Concebido bajo una **Arquitectura V2 desacoplada y resiliente**, el agente ejecuta un bucle continuo de toma de decisiones (`PLAN -> EXECUTE -> VERIFY -> REFLECT`), operando bajo el novedoso paradigma **JS Object Mode**, sanitización aislada por **`OutputParser`**, memoria episódica multinivel (**SQLite + LanceDB**) y control estricto de seguridad en tiempo de ejecución.
-
----
-
-## 🌟 Características Clave
-
-* ⚡ **JS Object Mode (Zero Syntax Errors):** Evaluación segura con `vm.runInNewContext()`. La IA emite objetos JavaScript delimitados por *Template Literals* (backticks `` ` ``), permitiendo la escritura nativa de código multilínea, saltos de línea y comillas internas sin necesidad de escapes propensos a errores.
-* 🛡️ **Escudo Purificador (`OutputParser.js`):** Extractor dedicado que aísla la estructura del objeto `{ tool: "...", arguments: { ... } }` y aniquila mediante Regex cualquier inyección de triples comillas de Markdown (```) o bloques no deseados.
-* 🧠 **Memoria Episódica Activa:** Almacena automáticamente en SQLite los fallos de consola, comandos denegados y feedback humano (`n [motivo]`). Previene la repetición de errores inyectando contexto preventivo en tareas similares.
-* 🔍 **Verifier Sintáctico Pre-Exec:** Analiza las ordenes propuestas antes de tocar la consola. Detiene comandos invertidos (ej. `clean build gradlew.bat`) y bloquea violaciones de *Path Traversal*.
-* 🚦 **Policy Engine & Risk Control:** Evaluación de riesgo en 3 niveles (`LOW`, `MEDIUM`, `HIGH`) con intervención humana explícita `(y/N [motivo])` para operaciones críticas.
-* 🎭 **Catálogo de Agentes Experto (`commands.json`):** Mas de 10 perfiles especializados (`/dev-java`, `/dev-react`, `/devops`, `/refactor`, `/debug`) listos para asumir roles de arquitectura.
+Concebido bajo una **Arquitectura Limpia en Capas (Clean & Layered Architecture)** y guiado por principios estrictos de diseño (**SOLID, KISS, DRY, YAGNI**), el agente opera bajo el paradigma **Zero-Git**, desacoplamiento de enrutamiento determinístico, descomposición autónoma de tareas mediante **TaskDAG**, verificación por evidencias y telemetría continua de aprendizaje.
 
 ---
 
-## 🏗️ Arquitectura del Sistema V2
+## 🌟 Capacidades Clave V3
+
+* ⚡ **Enrutamiento Determinístico vs. Razonamiento (Capacidad 3):** Autoclasifica peticiones. Consultas de repositorio (`git status`, `quién importa X`, `busca Y`) o scripts de consola se ejecutan **localmente en <50ms con 0 tokens de la IA**.
+* 📋 **Descomposición Autónoma de Tareas (TaskDAG - Capacidad 2):** Transforma requerimientos complejos en un Grafo Acíclico Dirigido (DAG) de subtareas lógicas, ejecutándolas en secuencia con actualización dinámica de estado.
+* 🛡️ **Filesystem Seguro Zero-Git (`AtomicWriter` - Capacidad 6):** Aplica modificaciones de código sobre archivos temporales (`.tmp`), valida la sintaxis determinísticamente (`node --check`, `JSON.parse`) y realiza un *swap* atómico. Si la sintaxis falla, el archivo original en disco permanece 100% intacto.
+* 🔎 **Verificación por Evidencias Determinísticas (`EvidenceEngine` - Capacidad 7):** Bloquea falsos positivos auditablemente (`file_exists`, `command_pass`, `http_check`) antes de otorgar el estado `SUCCESS`.
+* 🛑 **Control de Bucles y Replanificación Autónoma (`LoopDetector` & `Replanner` - Capacidad 9):** Monitorea patrones $A-A-A$, $A-B-A-B$ y estados `NO_PROGRESS` (3 intentos modificando código sin pasar tests). Ante un estancamiento, pausa los reintentos automáticos y fuerza a Gemini a descartar la ruta fallida y generar un nuevo plan.
+* 🧠 **Memoria Histórica y Checkpoints (Capacidad 1 & 8):** Persistencia en SQLite (`agent_runs`, `agent_checkpoints`, `episodic_memory`). Si la consola se interrumpe, el agente recupera el estado exacto del paso anterior. Ante errores de consola conocidos, aplica soluciones históricas sin consumir tokens.
+* 📊 **Observabilidad, Métricas y Dataset (`Tracer` & `MetricsCollector` - Capacidad 13):** Registra latencias exactas por componente (spans) y exporta trazas limpias de ejecuciones exitosas a `.agent_data/dataset.jsonl` para aprendizaje continuo.
+
+---
+
+## 🏗️ Arquitectura del Sistema V3
+
+El proyecto está estructurado en 5 capas desacopladas, aislando la lógica de negocio de los detalles de infraestructura (Playwright, SQLite, I/O):
 
 ```text
-                    ┌─────────────────────────┐
-                    │      REPL / CLI         │
-                    └────────────┬────────────┘
-                                 │
-                         ┌───────▼───────┐
-                         │   MAIN ()     │ (bootstrap & error handler)
-                         └───────┬───────┘
-                                 │
-                         ┌───────▼───────┐
-                         │ AGENT RUNTIME │
-                         └───────┬───────┘
-                                 │
-     ┌───────────────────────────┼───────────────────────────┐
-     ▼                           ▼                           ▼
-┌──────────────┐       ┌──────────────────┐        ┌──────────────────┐
-│ MODEL ROUTER │       │  MEMORY ENGINE   │        │  TOOL REGISTRY   │
-└──────┬───────┘       └────────┬─────────┘        └────────┬─────────┘
-       │                        │                           │
-       ▼                        ├── SQLite (Op/Epi/Proc)    ├── OutputParser (JS VM)
-┌────────────────┐              │                           ├── PolicyEngine (Risks)
-│ LLM PROVIDERS  │              └── LanceDB (Semantic)      └── Pre/Post Verifier
-└──────┬─────────┘                                          
-       │
-       ▼
- ┌───────────────┐
- │ Playwright/Web│
- └───────────────┘
+                            ┌─────────────────────────┐
+                            │      src/app/           │ (Application Lifecycle)
+                            └────────────┬────────────┘
+                                         │
+                 ┌───────────────────────┴───────────────────────┐
+                 ▼                                               ▼
+      ┌─────────────────────┐                         ┌─────────────────────┐
+      │   src/interfaces/   │                         │     src/domain/     │
+      │  (CLI REPL & Cmds)  │                         │ (DAG, AgentRuntime) │
+      └──────────┬──────────┘                         └──────────┬──────────┘
+                 │                                               │
+                 └───────────────────────┬───────────────────────┘
+                                         │
+                 ┌───────────────────────┴───────────────────────┐
+                 ▼                                               ▼
+      ┌─────────────────────┐                         ┌─────────────────────┐
+      │ src/infrastructure/ │                         │    src/shared/      │
+      │ (Playwright, SQLite)│                         │ (Config, Utils, Obs)│
+      └─────────────────────┘                         └─────────────────────┘
 
 ```
 
-### 📂 Estructura de Archivos V2
+### 📂 Estructura Completa de Carpetas
 
 ```text
 gemini-cli-bridge/
-├── index.js                  # Entry point con arranque limpio async main() y error handling.
-├── commands.json             # Catálogo de perfiles expertos (Prompts de Agente).
-├── package.json              # Dependencias del proyecto y binario ejecutable global.
-├── ARCHITECTURE_V2.md        # Especificación detallada del diseño de arquitectura.
-├── .agent_data/              # Directorio aislado de estado (SQLite, LanceDB, Sesiones, Logs).
-├── src/
-│   ├── agent/                # AgentRuntime (Loop autónomo), Verifier y Reflector.
-│   ├── config/               # Rutas unificadas del sistema (paths.js).
-│   ├── context/              # Indexador AST, PatternEngine y Context Retriever.
-│   ├── eval/                 # Evaluador sintáctico y conjunto de test cases en JSON.
-│   ├── llm/                  # ModelRouter, GeminiClient y adaptador GeminiPlaywrightProvider.
-│   ├── memory/               # SQLite (Operacional, Episódica, Procedural) y LanceDB.
-│   ├── observability/        # ExecutionLogger (uuid auditables) y MetricsCollector.
-│   ├── schemas/              # Esquemas Zod para la validación estricta de tools.
-│   ├── tools/                # ToolRegistry, PolicyEngine y conector MCP Client.
-│   └── utils/                # OutputParser.js (Parser de objetos JS) y FileScanner.js.
-├── cli/
-│   └── repl.js               # REPL interactivo con captura multilínea (/paste) y SIGINT.
-└── core/
-    └── commandDispatcher.js  # Gestor de perfiles, sesiones de chat e inyector de reglas.
+├── index.js                      # Bootstrap minimalista de la aplicación (10 líneas)
+├── commands.json                 # Catálogo de perfiles expertos (/dev, /refactor, etc.)
+├── package.json                  # Dependencias y binario ejecutable
+├── docs/                         # Especificaciones técnicas de arquitectura y capacidades
+│   ├── ARCHITECTURE_V3.md
+│   └── CAPACIDADES.md
+├── .agent_data/                  # Datos locales aislados (SQLite, Sesiones, Logs, Datasets)
+└── src/
+    ├── app/                      # Application Orquestador (Lifecyle, Menú de Chat, SIGINT)
+    ├── domain/                   # Núcleo del Agente Autónomo
+    │   ├── agent/                # Runtime, AgentState, TaskDAG, LoopDetector, Replanner
+    │   └── context/              # RepositoryIntelligence, ImpactAnalysis, Indexer
+    ├── infrastructure/           # Adaptadores de Entrada/Salida
+    │   ├── llm/                  # Playwright Client, ModelRouter, Provider
+    │   ├── persistence/          # MemoryDatabase (SQLite), Checkpoints, EpisodicMemory
+    │   └── tools/                # ToolRegistry, AtomicWriter, PolicyEngine
+    ├── interfaces/               # Capa de Interacción
+    │   ├── cli/                  # REPL interactivo con soporte multilínea (/paste)
+    │   └── core/                 # CommandDispatcher y gestor de perfiles
+    └── shared/                   # Recursos Compartidos
+        ├── assets/               # Banner ASCII (banner.txt)
+        ├── config/               # Fuente única de verdad de Rutas (paths.js) y Prompts (prompts.js)
+        ├── observability/        # ExecutionLogger, Tracer, MetricsCollector
+        ├── schemas/              # Esquemas de validación Zod
+        ├── utils/                # OutputParser (JS VM), FileScanner
+        └── eval/                 # Suite de benchmarking sintético
 
 ```
 
 ---
 
-## ⚡ Motor de Ejecución JS Object Mode V2
+## ⚡ JS Object Mode & Escritura Atómica
 
-A diferencia de los parsers rígidos basados en JSON plano o regex volátiles, el **Agent Runtime V2** exige a Gemini respuestas en formato de objetos nativos de JavaScript evaluados mediante `vm.runInNewContext()`:
+A diferencia de los parsers basados en JSON plano o regex volátiles, GeminiDev V3 utiliza **JS Object Mode** evaluado mediante un contexto aislado `vm.runInNewContext()`. La IA responde con objetos nativos delimitados por *Template Literals* (backticks ```):
 
 ```javascript
 {
   tool: "write_file",
   arguments: {
-    filePath: `src/main/java/com/example/cache/CacheService.java`,
-    content: `package com.example.cache;
+    filePath: `src/services/UserService.js`,
+    content: `const fs = require('fs');
 
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.stereotype.Service;
+class UserService {
+  async getUsers() {
+    return [{ id: 1, name: 'Alice' }];
+  }
+}
 
-@Service
-public class CacheService {
-    @Cacheable(value = "portfolio", key = "#id")
-    public String getPortfolioData(String id) {
-        return "Data for portfolio with id: " + id;
-    }
-}`
+module.exports = UserService;`
   }
 }
 
 ```
 
-### 🛡️ El Módulo `OutputParser.js`
+### 🛡️ Flujo de Seguridad `AtomicWriter`
 
-El parseo se delega completamente a `src/utils/outputParser.js`, el cual:
-
-1. Aisla la cadena desde el primer `{` hasta el último `}`.
-2. Aplica el regex `/```[a-zA-Z0-9_-]*/g` para destruir cualquier bloque Markdown residual.
-3. Transforma la cadena en un objeto JavaScript vivo sin romper los saltos de línea de los *Template Literals* (```).
+1. **Path Traversal Check:** Garantiza que la ruta permanezca dentro de `ROOT_DIR`.
+2. **Escritura Temporal:** Escribe el contenido en `filePath.tmp`.
+3. **Validación Sintáctica:** Ejecuta `node --check` (para JS/TS) o `JSON.parse` (para JSON) sobre el `.tmp`.
+4. **Swap Atómico:** Si compila/valida, ejecuta `fs.renameSync` reemplazando el archivo original. Si falla, destruye el `.tmp` dejando el código en disco intacto.
 
 ---
 
-## 🧠 Sistema de Memoria Persistente (SQLite & LanceDB)
+## 💾 Persistencia y Base de Datos (SQLite)
 
-La persistencia del agente se almacena dentro de `.agent_data/memory.db` (SQLite) y `.agent_data/lancedb/` (Vectorial):
+Todos los estados del agente se persisten en `.agent_data/memory.db` (SQLite):
 
-| Tipo de Memoria | Componente | Responsabilidad |
-| --- | --- | --- |
-| **Operacional** | `OperationalMemory` | Rastrea el estado de la tarea actual (`taskId`, `goal`, pasos, archivos modificados). |
-| **Episódica** | `EpisodicMemory` | Registra errores de terminal, bloqueos del `Verifier` y observaciones `n [motivo]`. |
-| **Procedural** | `ProceduralMemory` | Guarda flujos de trabajo eficientes aprendidos para tareas repetitivas. |
-| **Semántica** | `SemanticMemory` | LanceDB embebido para búsqueda vectorial por similitud conceptual de errores. |
-
-### 🔍 Inspección en Tiempo Real de la Memoria Episódica
-
-Puedes ejecutar este script directamente en la raíz para auditar qué ha aprendido tu agente:
-
-```bash
-node -e "
-  const Database = require('better-sqlite3');
-  const db = new Database('./.agent_data/memory.db');
-  console.log('\n--- 🧠 MEMORIA EPISÓDICA (Lecciones Aprendidas) ---');
-  console.table(db.prepare('SELECT id, command, error_output, user_feedback FROM episodic_memory ORDER BY id DESC LIMIT 5').all());
-"
-
-```
+| Tabla | Responsabilidad |
+| --- | --- |
+| `agent_runs` | Estado global del ciclo de vida (`IDLE`, `PLANNING`, `EXECUTING`, `SUCCESS`, `CANCELLED`). |
+| `agent_checkpoints` | Snapshots serializados del objeto `AgentState` por cada paso de subtarea. |
+| `episodic_memory` | Experiencias históricas de errores de terminal, bloqueos de sintaxis y soluciones aplicadas. |
+| `operational_memory` | Control activo de la tarea en ejecución y archivos modificados. |
 
 ---
 
 ## 🛠️ Catálogo de Comandos CLI
 
-### 💬 Comandos de Chat (Sesiones)
+### 💬 Comandos de Sesión de Chat
 
 | Comando | Descripción |
 | --- | --- |
-| `/chat-new` | Inicia una conversación limpia en Gemini Web. |
-| `/chat-save <nombre>` | Guarda el hilo activo en `saved_chats.json` (ej. `/chat-save sprint-4`). |
-| `/chat-list` | Muestra todos los chats guardados. |
-| `/chat-load <nombre>` | Cambia el navegador inmediatamente al chat seleccionado. |
-| `/chat-delete <nombre>` | Elimina un chat de la lista guardada. |
+| `/chat-new` | Inicia una conversación limpia en Gemini Web reinyectando reglas. |
+| `/chat-save <nombre>` | Guarda el hilo activo en `saved_chats.json`. |
+| `/chat-list` | Muestra la lista de chats guardados. |
+| `/chat-load <nombre>` | Carga inmediatamente la sesión del chat guardado. |
+| `/chat-delete <nombre>` | Elimina un chat de la lista. |
 
 ### ⚙️ Comandos de Sistema y Contexto
 
@@ -166,102 +149,62 @@ node -e "
 | `/paste` | Activa el modo multilínea. Finaliza enviando `.send` en una nueva línea. |
 | `/reload-rules` | Reinyecta las directrices del **JS Object Mode** en el chat activo. |
 | `/upload-files [texto]` | Empaqueta el repositorio y lo sube como archivo de contexto `.txt`. |
-| `/sync-all [texto]` | Fuerza la sincronización total de código y evalúa la instrucción. |
+| `/sync-all [texto]` | Fuerza la sincronización total del código y evalúa la instrucción. |
 | `/sync <rutas...>` | Sincroniza únicamente los archivos especificados (ej. `/sync src/app.js`). |
-| `/history` | Extrae el historial del chat actual y genera `HISTORIAL_CHAT.md`. |
+| `/history` | Extrae el historial del chat actual a `HISTORIAL_CHAT.md`. |
 | `/new-repo <ruta>` | Cambia el repositorio objetivo de trabajo en caliente. |
 | `/help` | Muestra la guía interactiva de comandos en la terminal. |
-| `/exit` | Cierra Chromium y finaliza el proceso de Node.js de forma segura. |
+| `/exit` | Cierra Chromium y finaliza la aplicación de forma segura. |
 
 ### 🎭 Perfiles de Agente Experto (`commands.json`)
 
-Para activar un perfil experto, antepone el comando a tu instrucción:
+Antepone el comando para activar perfiles especializados con prompts de arquitectura:
 
 * `/dev` - Desarrollador Full-Stack Senior (SOLID, KISS, DRY).
 * `/dev-java` - Arquitecto Java 21+ & Spring Boot 3+.
-* `/dev-java-webflux` - Especialista en Spring WebFlux 100% Reactivo y no bloqueante.
+* `/dev-java-webflux` - Especialista en Spring WebFlux 100% Reactivo.
 * `/dev-java-webflux-hexagonal` - Java Reactivo en Arquitectura Hexagonal y DDD.
 * `/dev-node` - Experto en Node.js, Express y Clean Architecture.
 * `/dev-react` / `/dev-angular` - Tech Leads Frontend (Signals, Standalone, Custom Hooks).
 * `/devops` - SRE/DevOps especialista en Docker multi-stage, K8s y CI/CD.
 * `/refactor` - Refactorización purista de código sin cambio de comportamiento.
 * `/review` - Auditoría estática de seguridad (OWASP) de **solo lectura**.
-* `/debug` - Troubleshooting, lecturas de stacktraces y RCA (Root Cause Analysis).
-* `/test-java` / `/test-node` - Ingenieros SDET especializados en JUnit 5, Mockito y Jest.
+* `/debug` - Troubleshooting, lecturas de stacktraces y Análisis de Causa Raíz (RCA).
+* `/test-java` / `/test-node` - SDET especializados en JUnit 5, Mockito y Jest.
 
 ---
 
-## 💡 Ejemplos de Uso en la CLI
+## 📦 Instalación y Uso
 
-### 1. Refactorización Segura con Perfil Experto
-
-```text
-GeminiDev V2 > /refactor optimiza la clase CacheService eliminando redundancias sin alterar el comportamiento.
-
-```
-
-### 2. Pegar Stacktraces Largos (`/paste`)
-
-```text
-GeminiDev V2 > /paste
-  [MODO MULTILÍNEA ACTIVADO]
-  > Pega todo tu texto, código o logs.
-  > Cuando termines, escribe ".send" en una nueva línea y presiona Enter.
-
-  /dev-java-webflux Corrige este error en el pipeline reactivo:
-  java.lang.IllegalStateException: block()/blockFirst()/blockLast() are blocking
-  at reactor.core.publisher.Mono.block(Mono.java:1738)
-  at com.example.service.UserService.getUser(UserService.java:45)
-  .send
-
-```
-
-### 3. Reinyectar Reglas en Chats Retomados
-
-```text
-GeminiDev V2 > /reload-rules
-  [/reload-rules] Inyectando reglas actualizadas en el chat activo...
-  ✅ Reglas actualizadas en memoria.
-
-```
-
----
-
-## 📦 Instalación y Configuración
-
-### 1. Clonar e Instalar Dependencias
+### 1. Instalación de Dependencias y Enlace Global
 
 ```bash
 git clone [https://github.com/tu-usuario/gemini-cli-bridge.git](https://github.com/tu-usuario/gemini-cli-bridge.git)
 cd gemini-cli-bridge
 npm install
-
-```
-
-### 2. Vincular Binario Globalmente
-
-```bash
 npm link
 
 ```
 
-*(En sistemas Linux/macOS puede requerir `sudo npm link`)*.
-
-### 3. Iniciar el Agente
-
-Apunta el agente a cualquier repositorio local de tu máquina:
+### 2. Ejecutar el Agente sobre un Repositorio
 
 ```bash
 gemini-cli-bridge /ruta/a/tu/proyecto
 
 ```
 
----
+### 3. Ejecutar Suite de Evaluaciones Sintácticas (Benchmark)
 
-## 🛡️ Protocolos de Seguridad (Architect Level)
-
-1. **Path Traversal Shield (`isSafePath`):** Bloquea cualquier intento del LLM de leer o escribir fuera de la raíz del proyecto (`projectRoot`).
-2. **Standard Execution Environment (`execSync`):** Todos los comandos ejecutados por la herramienta `execute_command` se aíslan en el `cwd` del repositorio del usuario.
-3. **Control de Interrupción Sigint (`Ctrl + C`):** Interrumpe de forma limpia la generación de respuesta del navegador mediante Playwright (`stopGeneration()`) sin cerrar el proceso principal del CLI.
+```bash
+node src/shared/eval/evaluator.js
 
 ```
+
+---
+
+## 🛡️ Protocolos de Seguridad y Guardrails
+
+1. **Path Traversal Shield (`isSafePath`):** Bloquea lecturas o escrituras fuera de `ROOT_DIR`.
+2. **Standard Execution Environment (`execSync`):** Aísla los comandos de terminal dentro de la raíz del proyecto vinculado.
+3. **Control de Interrupción Sigint (`Ctrl + C`):** Interrumpe de forma limpia las llamadas de Playwright (`stopGeneration()`) sin destruir el proceso principal del CLI.
+4. **Presupuesto y Guardrails:** Control determinístico de límites de iteración, deteniendo el bucle si se supera el presupuesto asignado sin completar evidencias.
