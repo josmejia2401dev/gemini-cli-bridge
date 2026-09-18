@@ -20,6 +20,7 @@ Concebido bajo una **Arquitectura Limpia en Capas (Clean & Layered Architecture)
 * 🛑 **Control de Bucles y Replanificación Autónoma (`LoopDetector` & `Replanner` - Capacidad 9):** Monitorea patrones $A-A-A$, $A-B-A-B$ y estados `NO_PROGRESS` (3 intentos modificando código sin pasar tests). Ante un estancamiento, pausa los reintentos automáticos y fuerza a Gemini a descartar la ruta fallida y generar un nuevo plan.
 * 🧠 **Memoria Histórica y Checkpoints (Capacidad 1 & 8):** Persistencia en SQLite (`agent_runs`, `agent_checkpoints`, `episodic_memory`). Si la consola se interrumpe, el agente recupera el estado exacto del paso anterior. Ante errores de consola conocidos, aplica soluciones históricas sin consumir tokens.
 * 📊 **Observabilidad, Métricas y Dataset (`Tracer` & `MetricsCollector` - Capacidad 13):** Registra latencias exactas por componente (spans) y exporta trazas limpias de ejecuciones exitosas a `.agent_data/dataset.jsonl` para aprendizaje continuo.
+* 🔌 **Contrato de Abstracción LLM (`ILLMClient` & `LLMFactory`):** Inversión de dependencias (DIP) pura. Permite intercambiar el motor subyacente (Playwright Chromium, API oficial de Gemini o modelos locales como Ollama) mediante configuración, sin modificar una sola línea del `AgentRuntime`.
 
 ---
 
@@ -54,7 +55,7 @@ El proyecto está estructurado en 5 capas desacopladas, aislando la lógica de n
 
 ```text
 gemini-cli-bridge/
-├── index.js                      # Bootstrap minimalista de la aplicación (10 líneas)
+├── index.js                      # Bootstrap minimalista de la aplicación
 ├── commands.json                 # Catálogo de perfiles expertos (/dev, /refactor, etc.)
 ├── package.json                  # Dependencias y binario ejecutable
 ├── docs/                         # Especificaciones técnicas de arquitectura y capacidades
@@ -62,12 +63,16 @@ gemini-cli-bridge/
 │   └── CAPACIDADES.md
 ├── .agent_data/                  # Datos locales aislados (SQLite, Sesiones, Logs, Datasets)
 └── src/
-    ├── app/                      # Application Orquestador (Lifecyle, Menú de Chat, SIGINT)
+    ├── app/                      # Orquestador del ciclo de vida y menús de la CLI
     ├── domain/                   # Núcleo del Agente Autónomo
     │   ├── agent/                # Runtime, AgentState, TaskDAG, LoopDetector, Replanner
     │   └── context/              # RepositoryIntelligence, ImpactAnalysis, Indexer
     ├── infrastructure/           # Adaptadores de Entrada/Salida
-    │   ├── llm/                  # Playwright Client, ModelRouter, Provider
+    │   ├── llm/                  # Capa de Interacción con Modelos de Lenguaje
+    │   │   ├── contracts/        # ILLMClient (Contrato base abstracto)
+    │   │   ├── providers/        # GeminiPlaywrightClient (Cliente Playwright estandarizado)
+    │   │   ├── llmFactory.js     # Fábrica de instanciación según configuración
+    │   │   └── modelRouter.js    # Enrutador centralizado de llamadas
     │   ├── persistence/          # MemoryDatabase (SQLite), Checkpoints, EpisodicMemory
     │   └── tools/                # ToolRegistry, AtomicWriter, PolicyEngine
     ├── interfaces/               # Capa de Interacción
@@ -80,7 +85,6 @@ gemini-cli-bridge/
         ├── schemas/              # Esquemas de validación Zod
         ├── utils/                # OutputParser (JS VM), FileScanner
         └── eval/                 # Suite de benchmarking sintético
-
 ```
 
 ---
