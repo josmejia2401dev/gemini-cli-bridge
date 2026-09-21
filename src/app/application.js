@@ -10,7 +10,6 @@ const ToolRegistry = require('../infrastructure/tools/registry');
 const AgentRuntime = require('../domain/agent/runtime');
 const CheckpointManager = require('../infrastructure/persistence/checkpoint');
 const MemoryDatabase = require('../infrastructure/persistence/db');
-const OperationalMemory = require('../infrastructure/persistence/operational');
 const EpisodicMemory = require('../infrastructure/persistence/episodic');
 const ExecutionLogger = require('../shared/observability/logger');
 const paths = require('../shared/config/paths');
@@ -85,78 +84,71 @@ class Application {
   }
 
   async resolveTargetChatUrl(repl) {
-    let targetUrl = 'https://gemini.google.com/app';
-    let isNewChat = false;
-
-    if (fs.existsSync(this.chatUrlFile)) {
-      const savedUrl = fs.readFileSync(this.chatUrlFile, 'utf-8').trim();
-      if (savedUrl.includes('/app/')) {
-        const chatsFile = paths.SAVED_CHATS_FILE;
-        let savedChats = {};
-        if (fs.existsSync(chatsFile)) {
-          try { savedChats = JSON.parse(fs.readFileSync(chatsFile, 'utf-8')); }
-          catch (e) { console.error('  Error al leer los chats guardados.'); }
-        }
-
-        const chatNames = Object.keys(savedChats);
-        const hasSavedChats = chatNames.length > 0;
-
-        console.log('  Se detectó actividad previa.');
-        console.log('  [1] Retomar último chat activo');
-        console.log('  [2] Iniciar Nuevo chat');
-
-        // Asignación dinámica de opciones para evitar colisión de números
-        let loadChatOption = null;
-        let exitOption = '3';
-
-        if (hasSavedChats) {
-          loadChatOption = '3';
-          exitOption = '4';
-          console.log('  [3] Cargar un chat guardado');
-          console.log('  [4] Salir');
-        } else {
-          console.log('  [3] Salir');
-        }
-
-        const choice = (await repl.askQuestion('  Selecciona una opción: ')).trim();
-
-        if (choice === '1') {
-          targetUrl = savedUrl;
-        } else if (choice === '2') {
-          targetUrl = 'https://gemini.google.com/app';
-          isNewChat = true;
-        } else if (loadChatOption && choice === loadChatOption) {
-          console.log('\n  [CHATS GUARDADOS]');
-          chatNames.forEach((name, index) => {
-            console.log(`  [${index + 1}] ${name}`);
-          });
-
-          const chatChoice = await repl.askQuestion('  Ingresa el número del chat: ');
-          const selectedIndex = parseInt(chatChoice.trim()) - 1;
-
-          if (selectedIndex >= 0 && selectedIndex < chatNames.length) {
-            const selectedName = chatNames[selectedIndex];
-            targetUrl = savedChats[selectedName];
-            fs.writeFileSync(this.chatUrlFile, targetUrl, 'utf-8');
-            console.log(`  [SISTEMA] Se cargará el chat: "${selectedName}"`);
-          } else {
-            console.log('  [!] Opción inválida. Iniciando un nuevo chat por defecto.');
-            isNewChat = true;
-          }
-        } else if (choice === exitOption) {
-          console.log('  Cerrando aplicación...');
-          repl.close();
-          process.exit(0);
-        } else {
-          console.log('  [!] Opción no reconocida. Iniciando un nuevo chat por defecto.');
-          isNewChat = true;
-        }
-      }
-    } else {
-      isNewChat = true;
+    if (!fs.existsSync(this.chatUrlFile)) {
+      return { targetUrl: 'https://gemini.google.com/app', isNewChat: true };
     }
 
-    return { targetUrl, isNewChat };
+    const savedUrl = fs.readFileSync(this.chatUrlFile, 'utf-8').trim();
+    if (!savedUrl.includes('/app/')) {
+      return { targetUrl: 'https://gemini.google.com/app', isNewChat: true };
+    }
+
+    const chatsFile = paths.SAVED_CHATS_FILE;
+    let savedChats = {};
+    if (fs.existsSync(chatsFile)) {
+      try { savedChats = JSON.parse(fs.readFileSync(chatsFile, 'utf-8')); }
+      catch (e) { console.error('  Error al leer los chats guardados.'); }
+    }
+
+    const chatNames = Object.keys(savedChats);
+    const hasSavedChats = chatNames.length > 0;
+
+    while (true) {
+      console.log('\n  Se detectó actividad previa.');
+      console.log('  [1] Retomar último chat activo');
+      console.log('  [2] Iniciar Nuevo chat');
+
+      let exitOption = '3';
+      if (hasSavedChats) {
+        exitOption = '4';
+        console.log('  [3] Cargar un chat guardado');
+        console.log('  [4] Salir');
+      } else {
+        console.log('  [3] Salir');
+      }
+
+      const choice = (await repl.askQuestion('  Selecciona una opción: ')).trim();
+
+      if (choice === '1') {
+        return { targetUrl: savedUrl, isNewChat: false };
+      } else if (choice === '2') {
+        return { targetUrl: 'https://gemini.google.com/app', isNewChat: true };
+      } else if (hasSavedChats && choice === '3') {
+        console.log('\n  [CHATS GUARDADOS]');
+        chatNames.forEach((name, index) => {
+          console.log(`  [${index + 1}] ${name}`);
+        });
+
+        const chatChoice = await repl.askQuestion('  Ingresa el número del chat: ');
+        const selectedIndex = parseInt(chatChoice.trim()) - 1;
+
+        if (selectedIndex >= 0 && selectedIndex < chatNames.length) {
+          const selectedName = chatNames[selectedIndex];
+          const targetUrl = savedChats[selectedName];
+          fs.writeFileSync(this.chatUrlFile, targetUrl, 'utf-8');
+          console.log(`  [SISTEMA] Se cargará el chat: "${selectedName}"`);
+          return { targetUrl, isNewChat: false };
+        } else {
+          console.log('  [!] Número de chat inválido.');
+        }
+      } else if (choice === exitOption) {
+        console.log('  Cerrando aplicación...');
+        repl.close();
+        process.exit(0);
+      } else {
+        console.log(`\n  [!] Opción no reconocida. Por favor ingresa una opción del 1 al ${exitOption}.`);
+      }
+    }
   }
 
   setupSigintHandler(repl, llmClient) {
@@ -190,21 +182,35 @@ class Application {
     const logger = new ExecutionLogger();
     let projectRoot = await this.resolveProjectRoot(repl);
 
-    const { targetUrl, isNewChat } = await this.resolveTargetChatUrl(repl);
+    // 1. Determinar el proveedor e instanciar el cliente PRIMERO
+    const providerType = (process.env.LLM_PROVIDER || 'PLAYWRIGHT').toUpperCase();
+    console.log(`\n  Iniciando motor de IA (${providerType} Provider)...`);
 
-    console.log('\n  Iniciando motor de IA (Playwright Provider)...');
-
-    const llmClient = LLMFactory.createClient(process.env.LLM_PROVIDER || 'PLAYWRIGHT', {
+    const llmClient = LLMFactory.createClient(providerType, {
       sessionDir: this.sessionDir,
       chatUrlFile: this.chatUrlFile
     });
+
+    let targetUrl = '';
+    let isNewChat = false;
+
+    // 2. Solo resolver sesión de navegador si el proveedor es PLAYWRIGHT
+    if (providerType === 'PLAYWRIGHT') {
+      const sessionInfo = await this.resolveTargetChatUrl(repl);
+      targetUrl = sessionInfo.targetUrl;
+      isNewChat = sessionInfo.isNewChat;
+    } else {
+      // Para APIs (GEMINI_API, QWEN_API, etc.), targetUrl representa el nombre del modelo
+      targetUrl = process.env.LLM_MODEL || (providerType === 'QWEN_API' ? 'qwen-coder-plus' : 'gemini-1.5-pro');
+    }
+
+    // 3. Conectar el cliente con el parámetro correspondiente
     await llmClient.connect(targetUrl);
 
     const modelRouter = new ModelRouter(llmClient);
     const toolRegistry = new ToolRegistry();
     const dbConnection = new MemoryDatabase();
     const checkpointManager = new CheckpointManager(dbConnection);
-    const operationalMemory = new OperationalMemory(dbConnection);
     const episodicMemory = new EpisodicMemory(dbConnection);
 
     const agentRuntime = new AgentRuntime({
@@ -217,15 +223,14 @@ class Application {
       checkpointManager
     });
 
-    const geminiAdapter = llmClient.client;
-    const dispatcher = new CommandDispatcher(geminiAdapter, projectRoot, this.dynamicCommands);
+    const dispatcher = new CommandDispatcher(llmClient, projectRoot, this.dynamicCommands);
 
     console.log('\n===============================================================');
     console.log(`   Agente CLI V3 Listo. Usa "/help" para comandos o "/paste".`);
     console.log('===============================================================\n');
 
-    // Inicialización de reglas en chats nuevos
-    if (isNewChat || targetUrl === 'https://gemini.google.com/app') {
+    // 4. Inicialización de reglas en chats nuevos (exclusivo para Playwright)
+    if (providerType === 'PLAYWRIGHT' && (isNewChat || targetUrl === 'https://gemini.google.com/app')) {
       console.log('  [SISTEMA] Inicializando nuevo chat con reglas globales...');
       const response = await modelRouter.generate({ prompt: SYSTEM_PROMPTS.INIT_NEW_CHAT });
       console.log('\n-------------------- IA --------------------');
@@ -277,7 +282,6 @@ class Application {
       if (dispatchResult.skip) continue;
 
       logger.startExecution();
-      operationalMemory.setTask(logger.currentExecutionId, dispatchResult.finalPrompt);
 
       await agentRuntime.runLoop(dispatchResult.finalPrompt);
     }

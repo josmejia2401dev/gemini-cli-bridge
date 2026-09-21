@@ -8,16 +8,12 @@ const TaskDecomposer = require('./decomposer');
 const ExecutionDecisionEngine = require('./decisionEngine');
 const ImpactAnalysis = require('../context/impactAnalysis');
 const ErrorAnalyzer = require('./errorAnalyzer');
-const LoopDetector = require('./loopDetector');
 const Replanner = require('./replanner');
-const Tracer = require('../../shared/observability/tracer');
-const MetricsCollector = require('../../shared/observability/metrics');
 
 class AgentRuntime {
   constructor({ modelRouter, toolRegistry, projectRoot, repl, logger, episodicMemory, checkpointManager }) {
     this.modelRouter = modelRouter;
     this.toolRegistry = toolRegistry;
-    this.policyEngine = new PolicyEngine();
     this.projectRoot = projectRoot;
     this.repl = repl;
     this.logger = logger;
@@ -25,15 +21,11 @@ class AgentRuntime {
     this.checkpointManager = checkpointManager;
 
     this.currentState = null;
-    this.decomposer = new TaskDecomposer(modelRouter);
+    this.policyEngine = new PolicyEngine();
+    this.decomposer = new TaskDecomposer();
     this.decisionEngine = new ExecutionDecisionEngine();
     this.impactAnalyzer = new ImpactAnalysis(projectRoot);
-    this.loopDetector = new LoopDetector();
-    this.replanner = new Replanner(modelRouter);
-
-    // ⚡ TELEMETRÍA Y OBSERVABILIDAD
-    this.tracer = new Tracer();
-    this.metrics = new MetricsCollector();
+    this.replanner = new Replanner();
   }
 
   setProjectRoot(newRoot) {
@@ -41,26 +33,50 @@ class AgentRuntime {
     this.impactAnalyzer = new ImpactAnalysis(newRoot);
   }
 
+  async executeReplan(failedTask, reason, details) {
+    console.log(`\n  🔄 [REPLANIFICACIÓN AUTOMÁTICA] Reorganizando la estrategia por: ${reason}...`);
+    this.currentState.transition('REPLAN');
+
+    const replanPrompt = this.replanner.getReplanPrompt({
+      userObjective: this.currentState.objective,
+      failedTask,
+      loopReason: reason,
+      loopDetails: details,
+      errors: this.currentState.errors,
+      currentDAG: this.currentState.dag
+    });
+    const response = await this.modelRouter.generate({ prompt: replanPrompt });
+
+    const newDAG = this.replanner.parseResponse(response.text, failedTask);
+    this.currentState.dag = newDAG;
+
+    console.log('\n    [NUEVA ESTRATEGIA ASIGNADA]:');
+    console.log(this.currentState.dag.formatSummary());
+  }
+
+  async generateTaskDAG(objective) {
+    console.log('  🧠 Analizando intención y generando DAG de tareas con Gemini...');
+    const prompt = this.decomposer.getDecompositionPrompt(objective);
+    const response = await this.modelRouter.generate({ prompt });
+    return this.decomposer.parseResponse(response.text, objective);
+  }
+
   async runLoop(initialPrompt, fileToUpload = null, existingState = null) {
     let currentFile = fileToUpload;
     const runId = this.logger?.currentExecutionId || `run_${Date.now()}`;
-    this.tracer.reset();
-    this.metrics.reset();
 
     if (existingState) {
       this.currentState = existingState;
       console.log(`  [🔄 REANUDACIÓN] Retomando tarea (Paso ${this.currentState.currentStep}) - Estado: ${this.currentState.status}`);
 
-      // 🛡️ GUARDIA V3: Detectar si el DAG está vacío en Map (.size) o Array (.length)
+      // GUARDIA V3: Detectar si el DAG está vacío en Map (.size) o Array (.length)
       const taskCount = this.currentState.dag?.tasks?.size
         ?? this.currentState.dag?.tasks?.length
         ?? 0;
 
       if (taskCount === 0 || this.currentState.status === 'PLANNING') {
         console.log('  [SISTEMA] Tarea reanudada en PLANNING o sin subtareas. Generando plan con Gemini...');
-        const spanDecompose = this.tracer.startSpan('TASK_DECOMPOSE');
-        const taskDAG = await this.decomposer.decompose(this.currentState.objective || initialPrompt);
-        this.tracer.endSpan(spanDecompose);
+        const taskDAG = await this.generateTaskDAG(this.currentState.objective || initialPrompt);
 
         this.currentState.dag = taskDAG;
         if (this.checkpointManager) {
@@ -83,9 +99,7 @@ class AgentRuntime {
         this.checkpointManager.saveCheckpoint(this.currentState);
       }
 
-      const spanDecompose = this.tracer.startSpan('TASK_DECOMPOSE');
-      const taskDAG = await this.decomposer.decompose(initialPrompt);
-      this.tracer.endSpan(spanDecompose);
+      const taskDAG = await this.generateTaskDAG(initialPrompt);
 
       this.currentState.dag = taskDAG;
       console.log(this.currentState.dag.formatSummary());
@@ -100,8 +114,17 @@ class AgentRuntime {
 
       if (nextTasks.length === 0) {
         console.log('  ⚠️ [DAG STUCK] No hay subtareas pendientes con dependencias satisfechas.');
-        this.currentState.transition('REFLECTING');
-        break;
+
+        //this.currentState.transition('REFLECTING');
+        //break;
+
+        await this.executeReplan(
+          { id: 'DAG_STUCK', description: 'Desbloquear dependencias del DAG' },
+          'DAG_STUCK',
+          'El grafo de tareas actual se atascó sin poder avanzar en las dependencias.'
+        );
+        if (this.checkpointManager) this.checkpointManager.saveCheckpoint(this.currentState);
+        continue;
       }
 
       const activeTask = nextTasks[0];
@@ -116,7 +139,6 @@ class AgentRuntime {
 
       if (decision.mode === 'DETERMINISTIC') {
         console.log(`  ⚡ [ENRUTAMIENTO DETERMINÍSTICO] Ejecución local instantánea (Sin IA) -> Herramienta: "${decision.tool}"`);
-        const spanDet = this.tracer.startSpan('DETERMINISTIC_EXEC', { tool: decision.tool });
         const startTime = Date.now();
 
         try {
@@ -126,9 +148,6 @@ class AgentRuntime {
             { projectRoot: this.projectRoot, repl: this.repl }
           );
 
-          const duration = Date.now() - startTime;
-          this.tracer.endSpan(spanDet, { success: true });
-          this.metrics.recordToolCall(decision.tool, duration, true);
 
           this.currentState.addToolCall(decision.tool, decision.args, toolResult);
           console.log(`  Resultado:`, JSON.stringify(toolResult, null, 2));
@@ -138,9 +157,6 @@ class AgentRuntime {
           this.currentState.completedSteps.push(activeTask.id);
           console.log(`  ✅ [SUBTAREA COMPLETADA] [${activeTask.id}]`);
         } catch (execErr) {
-          const duration = Date.now() - startTime;
-          this.tracer.endSpan(spanDet, { success: false, error: execErr.message });
-          this.metrics.recordToolCall(decision.tool, duration, false);
 
           console.error(`  ❌ Error en ejecución determinística: ${execErr.message}`);
 
@@ -171,9 +187,7 @@ class AgentRuntime {
       const fileMatch = activeTask.description.match(/([a-zA-Z0-9_\-\/]+\.(?:js|ts|jsx|tsx|java|py|json))/i);
       if (fileMatch) {
         const targetFile = fileMatch[1];
-        const spanImpact = this.tracer.startSpan('IMPACT_ANALYSIS');
         const impact = this.impactAnalyzer.analyze(targetFile);
-        this.tracer.endSpan(spanImpact);
 
         if (impact.noticeForLLM) {
           console.log(`  🎯 [ANÁLISIS DE IMPACTO] "${targetFile}" afecta a ${impact.totalImpacted} archivo(s) consumidores/tests.`);
@@ -201,17 +215,11 @@ class AgentRuntime {
             }
           }
 
-          const spanLLM = this.tracer.startSpan('LLM_GENERATE');
-          const llmStartTime = Date.now();
-
           const response = await this.modelRouter.generate({
             prompt: subtaskPrompt,
             fileToUpload: currentFile
           });
 
-          const llmDuration = Date.now() - llmStartTime;
-          this.tracer.endSpan(spanLLM);
-          this.metrics.recordLlmCall(llmDuration);
 
           global.isProcessing = false;
           if (global.abortLoop) {
@@ -240,47 +248,6 @@ class AgentRuntime {
             }
           }
 
-          const actionSig = isToolCall
-            ? `${parsedObject.tool}:${JSON.stringify(parsedObject.arguments)}`
-            : 'no_tool_response';
-
-          const snapshot = {
-            errorCount: this.currentState.errors.length,
-            evidencePassedCount: this.currentState.evidence.filter(e => e.passed).length,
-            filesModifiedCount: this.currentState.filesModified.length
-          };
-
-          const loopCheck = this.loopDetector.registerStep(actionSig, snapshot);
-
-          if (loopCheck.loopDetected) {
-            console.log(`\n  🛑 [DETERMINISTIC LOOP DETECTED] Motivo: ${loopCheck.reason}`);
-            console.log(`     Detalles: ${loopCheck.details}`);
-
-            this.currentState.transition('REPLAN');
-            this.metrics.recordLoopRecovery();
-
-            const spanReplan = this.tracer.startSpan('REPLANNER');
-            const newDAG = await this.replanner.replan({
-              userObjective: this.currentState.objective,
-              failedTask: activeTask,
-              loopReason: loopCheck.reason,
-              loopDetails: loopCheck.details,
-              errors: this.currentState.errors,
-              currentDAG: this.currentState.dag
-            });
-            this.tracer.endSpan(spanReplan);
-
-            this.currentState.dag = newDAG;
-            this.loopDetector.reset();
-
-            console.log('\n  🔄 [REPLANIFICACIÓN COMPLETADA] Nueva estrategia asignada:');
-            console.log(this.currentState.dag.formatSummary());
-
-            if (this.checkpointManager) this.checkpointManager.saveCheckpoint(this.currentState);
-
-            subtaskPrompt = null;
-            break;
-          }
 
           if (isToolCall) {
             const toolName = parsedObject.tool;
@@ -288,7 +255,24 @@ class AgentRuntime {
 
             console.log(`\n  [⚡ TOOL RUNTIME (JS MODE)] Herramienta solicitada: "${toolName}"`);
 
-            if (toolName === 'execute_command') {
+            // VALIDACIÓN DE POLÍTICA Y RIESGO (Human-in-the-Loop)
+            const toolDef = this.toolRegistry.getTool(toolName);
+            const policyCheck = await this.policyEngine.evaluateAndConfirm({
+              toolName,
+              args,
+              toolDef,
+              repl: this.repl
+            });
+
+            if (!policyCheck.allowed) {
+              console.log(`  [⛔ ACCIÓN BLOQUEADA] ${policyCheck.reason}`);
+              this.currentState.addError(policyCheck.reason);
+
+              // Se le regresa feedback a la IA informando que el usuario canceló la acción
+              followUpContext = `[SISTEMA ERROR]: ${policyCheck.reason}. Debes proponer un enfoque alternativo o consultar al usuario.`;
+            }
+
+            if (toolName === 'execute_command' && !followUpContext) {
               const verification = Verifier.preExecuteCommand(args.command || '');
               if (!verification.valid) {
                 console.log(`  [⛔ VERIFIER BLOCKED] ${verification.reason}`);
@@ -306,19 +290,12 @@ class AgentRuntime {
             }
 
             if (!followUpContext) {
-              const spanTool = this.tracer.startSpan('TOOL_EXECUTION', { tool: toolName });
-              const toolStartTime = Date.now();
-
               try {
                 const toolResult = await this.toolRegistry.executeTool(
                   toolName,
                   args,
                   { projectRoot: this.projectRoot, repl: this.repl }
                 );
-
-                const toolDuration = Date.now() - toolStartTime;
-                this.tracer.endSpan(spanTool, { success: true });
-                this.metrics.recordToolCall(toolName, toolDuration, true);
 
                 this.currentState.addToolCall(toolName, args, toolResult);
                 if (toolName === 'write_file' && args.filePath) {
@@ -333,9 +310,6 @@ class AgentRuntime {
 
                 followUpContext = `[SISTEMA: Resultado de ${toolName}]:${JSON.stringify(toolResult)}`;
               } catch (toolError) {
-                const toolDuration = Date.now() - toolStartTime;
-                this.tracer.endSpan(spanTool, { success: false, error: toolError.message });
-                this.metrics.recordToolCall(toolName, toolDuration, false);
 
                 if (this.episodicMemory && toolName === 'execute_command') {
                   this.episodicMemory.recordFailure(args.command, toolError.message, "Fallo al ejecutar en terminal");
@@ -351,36 +325,12 @@ class AgentRuntime {
               }
             }
           } else {
-            console.log(`  🔎 [BARRERA DE EVIDENCIAS] Gemini declaró haber terminado la subtarea [${activeTask.id}]. Verificando evidencias determinísticas...`);
-
-            const requiredEvidences = [];
-            for (const file of this.currentState.filesModified) {
-              requiredEvidences.push({ type: 'file_exists', target: file });
-            }
-
-            if (activeTask.description.toLowerCase().includes('test') || activeTask.description.toLowerCase().includes('prueba')) {
-              requiredEvidences.push({ type: 'command_pass', target: 'npm test' });
-            }
-
-            const spanEvidence = this.tracer.startSpan('EVIDENCE_AUDIT');
-            const evidenceAudit = await Verifier.verifyEvidences(this.projectRoot, requiredEvidences);
-            this.tracer.endSpan(spanEvidence, { success: evidenceAudit.success });
-
-            if (evidenceAudit.success) {
-              activeTask.status = 'completed';
-              this.currentState.dag.updateStatus(activeTask.id, 'completed');
-              this.currentState.completedSteps.push(activeTask.id);
-              console.log(`  ✅ [SUBTAREA COMPLETADA Y AUDITADA] [${activeTask.id}]: Evidencias superadas (${evidenceAudit.passedCount}/${evidenceAudit.total}).`);
-              subtaskPrompt = null;
-              break;
-            } else {
-              console.log(`  ⛔ [BARRERA DE EVIDENCIAS BLOQUEADA] Se bloqueó la finalización. Pruebas fallidas: ${evidenceAudit.failures.length}`);
-              this.currentState.transition('REFLECTING');
-
-              let failureDetails = evidenceAudit.failures.map(f => `- ${f.type} en '${f.target}': ${f.details}`).join('\n');
-
-              followUpContext = `[SISTEMA ERROR: EVIDENCIAS OBLIGATORIAS NO SUPERADAS]\nAfirmaste haber terminado la subtarea, pero las siguientes comprobaciones determinísticas FALLARON:\n${failureDetails}\n\nNO puedes concluir la subtarea hasta resolver estos errores y asegurarte de que el código compila y pasa las pruebas.`;
-            }
+            activeTask.status = 'completed';
+            this.currentState.dag.updateStatus(activeTask.id, 'completed');
+            this.currentState.completedSteps.push(activeTask.id);
+            console.log(`  ✅ [SUBTAREA COMPLETADA] [${activeTask.id}]`);
+            subtaskPrompt = null;
+            break;
           }
 
           if (followUpContext) {
@@ -392,8 +342,18 @@ class AgentRuntime {
           activeTask.status = 'failed';
           this.currentState.dag.updateStatus(activeTask.id, 'failed');
           this.currentState.addError(err.message);
-          this.currentState.transition('REFLECTING');
+
+          //this.currentState.transition('REFLECTING');
+          //if (this.checkpointManager) this.checkpointManager.saveCheckpoint(this.currentState);
+          //break;
+
+          await this.executeReplan(
+            activeTask,
+            'SUBTASK_FAILED',
+            `La subtarea [${activeTask.id}] falló con el error: ${err.message}`
+          );
           if (this.checkpointManager) this.checkpointManager.saveCheckpoint(this.currentState);
+          subtaskPrompt = null;
           break;
         }
       }
@@ -403,17 +363,10 @@ class AgentRuntime {
       this.currentState.transition('SUCCESS');
       if (this.checkpointManager) this.checkpointManager.markRunCompleted(this.currentState.runId, 'SUCCESS');
 
-      const tracerSummary = this.tracer.getSummary();
-      const metricsSummary = this.metrics.getSummary();
-
-      console.log('\n  🎉 [ÉXITO GLOBAL] Todas las subtareas del DAG han sido completadas y auditadas exitosamente.');
-      console.log('  📊 [TELEMETRÍA Y MÉTRICAS DE EJECUCIÓN]');
-      console.log(`     - Llamadas a IA: ${metricsSummary.llmCalls} (Latencia media: ${metricsSummary.avgLlmLatencyMs} ms)`);
-      console.log(`     - Llamadas a Herramientas: ${metricsSummary.totalToolCalls} (Éxito: ${metricsSummary.toolSuccessRate}, Latencia media: ${metricsSummary.avgToolLatencyMs} ms)`);
-      console.log(`     - Recuperaciones de Bucle: ${metricsSummary.loopRecoveries}\n`);
+      console.log('\n  🎉 [ÉXITO GLOBAL] Todas las subtareas del DAG han sido completadas exitosamente.\n');
 
       if (this.logger && typeof this.logger.saveDatasetTrace === 'function') {
-        this.logger.saveDatasetTrace(this.currentState, { tracerSummary, metricsSummary });
+        this.logger.saveDatasetTrace(this.currentState);
       }
     }
   }

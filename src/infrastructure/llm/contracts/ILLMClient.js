@@ -19,6 +19,10 @@ class ILLMClient {
     throw new Error("El método 'stopGeneration()' debe ser implementado.");
   }
 
+  async getChatHistory() {
+    return 'El proveedor actual no soporta la extracción de historial visual.';
+  }
+
   async close() {
     throw new Error("El método 'close()' debe ser implementado.");
   }

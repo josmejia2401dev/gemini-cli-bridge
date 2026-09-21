@@ -17,7 +17,7 @@ const ignoreFiles = new Set([
   '.session_repo_path.txt'
 ]);
 
-// 🎯 LISTA DE PATRONES CON SOPORTE WILDCARD (*) Y REGEX
+// LISTA DE PATRONES CON SOPORTE WILDCARD (*) Y REGEX
 const validPatterns = [
   '*.md', '*.markdown', '*.mdx',                              // Documentación Markdown
   '*.js', '*.mjs', '*.cjs', '*.ts', '*.mts', '*.cts',        // JavaScript / TypeScript

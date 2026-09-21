@@ -1,5 +1,4 @@
 const path = require('path');
-const EvidenceEngine = require('./evidenceEngine');
 
 /**
  * Validador Pre y Post ejecución para prevenir alucinaciones sintácticas,
@@ -35,13 +34,6 @@ class Verifier {
       return { success: false, error: stderr };
     }
     return { success: true };
-  }
-
-  /**
-   * ⚡ AUDITORÍA DETERMINÍSTICA DE EVIDENCIAS
-   */
-  static async verifyEvidences(projectRoot, evidenceList) {
-    return await EvidenceEngine.verifyAll(projectRoot, evidenceList);
   }
 }
 

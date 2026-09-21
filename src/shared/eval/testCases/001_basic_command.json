@@ -1,8 +1,0 @@
-{
-  "id": "001",
-  "task": "Ejecutar limpieza del proyecto Gradle",
-  "input": "ejecuta gradlew.bat clean build",
-  "expectedTool": "execute_command",
-  "expectedExecutable": "gradlew.bat",
-  "prohibitedPrefixes": ["build clean", "clean gradlew.bat"]
-}

@@ -6,7 +6,7 @@
 class ExecutionDecisionEngine {
   constructor() {
     this.deterministicPatterns = [
-      // 🎯 ESTADO DEL REPOSITORIO (Captura variaciones de lenguaje natural)
+      // ESTADO DEL REPOSITORIO (Captura variaciones de lenguaje natural)
       {
         regex: /(?:estado\s+del\s+(?:repo|repositorio|proyecto)|git\s+status|consulta\s+(?:el\s+)?estado)/i,
         tool: 'execute_command',

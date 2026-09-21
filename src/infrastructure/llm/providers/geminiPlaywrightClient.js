@@ -23,7 +23,14 @@ class GeminiPlaywrightClient extends ILLMClient {
     });
 
     this.page = this.context.pages().length > 0 ? this.context.pages()[0] : await this.context.newPage();
-    await this.page.goto(targetUrl);
+
+    try {
+      await this.page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+    } catch (navError) {
+      if (!navError.message.includes('ERR_ABORTED')) {
+        throw navError;
+      }
+    }
 
     if (this.page.url().includes('accounts.google.com')) {
       console.log('📌 Por favor, inicia sesión en Google en la ventana del navegador.');

@@ -1,35 +1,28 @@
-/**
- * Motor de políticas de seguridad. Clasifica el riesgo de las herramientas 
- * y determina si requieren confirmación previa del usuario.
- */
 class PolicyEngine {
-  constructor() {
-    this.riskMap = {
-      read_file: 'LOW',
-      list_files: 'LOW',
-      search_code: 'LOW',
-      write_file: 'MEDIUM',
-      move_file: 'MEDIUM',
-      delete_file: 'HIGH',
-      execute_command: 'HIGH'
-    };
-  }
+  /**
+   * Evalúa si una herramienta requiere autorización interactiva del usuario.
+   */
+  async evaluateAndConfirm({ toolName, args, toolDef, repl }) {
+    const riskLevel = toolDef?.riskLevel || 'LOW';
 
-  getRiskLevel(toolName, args = {}) {
-    if (toolName === 'execute_command') {
-      const cmd = (args.command || '').trim().toLowerCase();
-      // Comandos seguros de consulta rápida
-      if (cmd.startsWith('npm test') || cmd.startsWith('git status') || cmd.startsWith('node -v')) {
-        return 'LOW';
+    // Si el riesgo es HIGH o CRITICAL, pedimos confirmación explícita
+    if (riskLevel === 'HIGH' || riskLevel === 'CRITICAL') {
+      console.log(`\n  ⚠️ [POLÍTICA DE SEGURIDAD] La herramienta "${toolName}" tiene riesgo [${riskLevel}].`);
+      
+      if (args.command) console.log(`     Comando a ejecutar: "${args.command}"`);
+      if (args.filePath) console.log(`     Archivo a modificar: "${args.filePath}"`);
+
+      const answer = await repl.askQuestion('  ¿Autorizas esta ejecución? (y/N): ');
+
+      if (answer.trim().toLowerCase() !== 'y' && answer.trim().toLowerCase() !== 's') {
+        return {
+          allowed: false,
+          reason: `El usuario rechazó la ejecución de la herramienta "${toolName}" por motivos de seguridad.`
+        };
       }
-      return 'HIGH';
     }
-    return this.riskMap[toolName] || 'MEDIUM';
-  }
 
-  requiresApproval(toolName, args = {}) {
-    const risk = this.getRiskLevel(toolName, args);
-    return risk === 'HIGH' || risk === 'MEDIUM';
+    return { allowed: true };
   }
 }
 

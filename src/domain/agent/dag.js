@@ -42,7 +42,7 @@ class TaskDAG {
   }
 
   isCompleted() {
-    // 🛡️ Map usa .size, no .length
+    // Map usa .size, no .length
     if (!this.tasks || this.tasks.size === 0) {
       return false;
     }

@@ -2,12 +2,11 @@ const OutputParser = require('../../shared/utils/outputParser');
 const TaskDAG = require('./dag');
 
 class TaskDecomposer {
-  constructor(modelRouter) {
-    this.modelRouter = modelRouter;
-  }
-
-  async decompose(userObjective) {
-    const prompt = `[SISTEMA: PLANIFICADOR DE TAREAS DAG]
+  /**
+   * Genera el prompt estructurado para la planificación.
+   */
+  getDecompositionPrompt(userObjective) {
+    return `[SISTEMA: PLANIFICADOR DE TAREAS DAG]
 Debes analizar la siguiente solicitud del usuario y descomponerla en un Grafo Acíclico Dirigido (DAG) de subtareas lógicas, atómicas y ordenadas según sus dependencias.
 
 SOLICITUD: "${userObjective}"
@@ -30,10 +29,13 @@ Responde ÚNICAMENTE con un Objeto JavaScript estructurado así (usa backticks \
     ]
   }
 }`;
+  }
 
-    console.log('  🧠 Analizando intención y generando DAG de tareas con Gemini...');
-    const response = await this.modelRouter.generate({ prompt });
-    const parseResult = OutputParser.parseToolCall(response.text);
+  /**
+   * Transforma la respuesta de texto de Gemini en una instancia de TaskDAG.
+   */
+  parseResponse(responseText, userObjective) {
+    const parseResult = OutputParser.parseToolCall(responseText);
 
     if (
       parseResult.success &&

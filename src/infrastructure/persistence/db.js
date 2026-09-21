@@ -5,19 +5,12 @@ class MemoryDatabase {
   constructor(dbPath = null) {
     const finalPath = dbPath || paths.SQLITE_DB;
     this.db = new Database(finalPath);
+    this.db.pragma('foreign_keys = ON');
     this.initTables();
   }
 
   initTables() {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS operational_memory (
-        task_id TEXT PRIMARY KEY,
-        goal TEXT NOT NULL,
-        current_step INTEGER DEFAULT 1,
-        status TEXT DEFAULT 'active',
-        files_changed TEXT DEFAULT '[]',
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
 
       CREATE TABLE IF NOT EXISTS episodic_memory (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,14 +19,6 @@ class MemoryDatabase {
         user_feedback TEXT,
         solution_applied TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS procedural_memory (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_type TEXT NOT NULL UNIQUE,
-        steps_json TEXT NOT NULL,
-        success_count INTEGER DEFAULT 1,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE TABLE IF NOT EXISTS agent_runs (

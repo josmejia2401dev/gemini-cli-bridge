@@ -3,23 +3,17 @@ const TaskDAG = require('./dag');
 
 /**
  * Replanner
- * Solicita a Gemini un nuevo plan alternativo descartando la ruta fallida
- * al detectar estancamiento o bucles determinísticos.
+ * Construye el prompt y parsea la respuesta para replanificar estrategias
+ * al detectar estancamiento o bucles. Componente puro sin dependencias de I/O.
  */
 class Replanner {
-  constructor(modelRouter) {
-    this.modelRouter = modelRouter;
-  }
-
   /**
-   * Genera un nuevo TaskDAG descartando la estrategia actual.
-   * @param {Object} params - { userObjective, failedTask, loopReason, loopDetails, errors, currentDAG }
-   * @returns {Promise<TaskDAG>}
+   * Genera el prompt para solicitar un nuevo DAG alternativo a la IA.
    */
-  async replan({ userObjective, failedTask, loopReason, loopDetails, errors, currentDAG }) {
+  getReplanPrompt({ userObjective, failedTask, loopReason, loopDetails, errors, currentDAG }) {
     const recentErrors = errors.slice(-3).map(e => `- ${e.error || e}`).join('\n');
 
-    const prompt = `[SISTEMA: REPLANIFICADOR AUTÓNOMO DE ESTRATEGIA]
+    return `[SISTEMA: REPLANIFICADOR AUTÓNOMO DE ESTRATEGIA]
 Se ha DETECTADO UN BUCLE O ESTANCAMIENTO DETERMINÍSTICO (${loopReason}).
 
 MOTIVO EXACTO DEL ESTANCAMIENTO:
@@ -54,10 +48,13 @@ Responde ÚNICAMENTE con un Objeto JavaScript estructurado así (usa backticks \
     ]
   }
 }`;
+  }
 
-    console.log('\n  🧠 [REPLANNER] Solicitando una estrategia completamente nueva a Gemini...');
-    const response = await this.modelRouter.generate({ prompt });
-    const parseResult = OutputParser.parseToolCall(response.text);
+  /**
+   * Transforma la respuesta de texto de Gemini en un nuevo TaskDAG.
+   */
+  parseResponse(responseText, failedTask) {
+    const parseResult = OutputParser.parseToolCall(responseText);
 
     if (
       parseResult.success &&

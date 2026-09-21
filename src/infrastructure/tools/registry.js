@@ -5,6 +5,7 @@ const path = require('path');
 const RepositoryIndexer = require('../../domain/context/indexer');
 const RepositoryIntelligence = require('../../domain/context/repositoryIntel');
 const ImpactAnalysis = require('../../domain/context/impactAnalysis');
+const AtomicWriter = require('../../infrastructure/tools/atomicWriter');
 const { z } = require('zod');
 
 class ToolRegistry {
@@ -98,7 +99,6 @@ class ToolRegistry {
       }
     });
 
-    // ⚡ NUEVA HERRAMIENTA: ANÁLISIS PREDICTIVO DE IMPACTO
     this.registerTool({
       name: 'analyze_impact',
       description: 'Determina qué módulos y pruebas podrían verse afectados antes de editar un archivo',
@@ -107,24 +107,6 @@ class ToolRegistry {
       execute: async (args, context) => {
         const analyzer = new ImpactAnalysis(context.projectRoot);
         return analyzer.analyze(args.filePath);
-      }
-    });
-
-    // ⚡ HERRAMIENTA DE VERIFICACIÓN DE EVIDENCIAS
-    this.registerTool({
-      name: 'verify_evidence',
-      description: 'Audita determinísticamente evidencias objetivas (file_exists, command_pass, http_check)',
-      riskLevel: 'LOW',
-      schema: z.object({
-        evidences: z.array(z.object({
-          type: z.enum(['file_exists', 'command_pass', 'http_check']),
-          target: z.string().min(1),
-          method: z.string().optional(),
-          expectedStatus: z.number().optional()
-        })).min(1)
-      }),
-      execute: async (args, context) => {
-        return await Verifier.verifyEvidences(context.projectRoot, args.evidences);
       }
     });
   }

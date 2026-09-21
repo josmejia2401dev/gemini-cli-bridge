@@ -145,8 +145,12 @@ class CommandDispatcher {
 
     async handleChatNew() {
         console.log('  [SISTEMA] Iniciando un nuevo chat...');
-        await this.gemini.page.goto('https://gemini.google.com/app');
-        await this.gemini.page.waitForTimeout(2000);
+        if (this.gemini.page) {
+            await this.gemini.page.goto('https://gemini.google.com/app');
+            await this.gemini.page.waitForTimeout(2000);
+        } else {
+            await this.gemini.connect('https://gemini.google.com/app');
+        }
 
         if (fs.existsSync(this.chatsFile)) {
             if (fs.existsSync(paths.CHAT_URL_FILE)) {
@@ -159,6 +163,10 @@ class CommandDispatcher {
     handleChatSave(instruction) {
         const name = instruction.substring(11).trim();
         if (!name) return console.log('  ❌ Debes especificar un nombre: /chat-save <nombre>');
+
+        if (!this.gemini.page) {
+            return console.log('  ℹ️ El guardado de URLs solo está disponible para el proveedor Playwright.');
+        }
 
         const currentUrl = this.gemini.page.url();
         if (!currentUrl.includes('/app/')) return console.log('  ❌ Aún no hay un hilo activo.');
@@ -188,8 +196,12 @@ class CommandDispatcher {
         if (!targetUrl) return console.log(`  ❌ No se encontró el chat "${name}".`);
 
         console.log(`  [SISTEMA] Cargando chat "${name}"...`);
-        await this.gemini.page.goto(targetUrl);
-        await this.gemini.page.waitForTimeout(2000);
+        if (this.gemini.page) {
+            await this.gemini.page.goto(targetUrl);
+            await this.gemini.page.waitForTimeout(2000);
+        } else {
+            await this.gemini.connect(targetUrl);
+        }
 
         fs.writeFileSync(paths.CHAT_URL_FILE, targetUrl, 'utf-8');
         console.log(`  ✅ Chat "${name}" cargado y listo.`);

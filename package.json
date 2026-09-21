@@ -16,6 +16,8 @@
   "dependencies": {
     "better-sqlite3": "13.0.3",
     "playwright": "^1.63.0",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@google/generative-ai": "^0.24.1",
+    "openai": "^7.20.0"
   }
 }

@@ -11,7 +11,6 @@ class AgentState {
     filesRead = [],
     filesModified = [],
     toolCalls = [],
-    evidence = [],
     errors = [],
     iterations = 0,
     dag = []
@@ -25,7 +24,6 @@ class AgentState {
     this.filesRead = Array.from(new Set(filesRead));
     this.filesModified = Array.from(new Set(filesModified));
     this.toolCalls = toolCalls;
-    this.evidence = evidence;
     this.errors = errors;
     this.iterations = iterations;
     this.dag = dag instanceof TaskDAG ? dag : TaskDAG.fromJSON(dag);
@@ -56,16 +54,6 @@ class AgentState {
     }
   }
 
-  addEvidence(type, target, passed = false, details = '') {
-    const existingIndex = this.evidence.findIndex(e => e.type === type && e.target === target);
-    const entry = { type, target, passed, details, timestamp: new Date().toISOString() };
-    if (existingIndex >= 0) {
-      this.evidence[existingIndex] = entry;
-    } else {
-      this.evidence.push(entry);
-    }
-  }
-
   addError(error) {
     this.errors.push({
       step: this.currentStep,
@@ -85,7 +73,6 @@ class AgentState {
       filesRead: this.filesRead,
       filesModified: this.filesModified,
       toolCalls: this.toolCalls,
-      evidence: this.evidence,
       errors: this.errors,
       iterations: this.iterations,
       dag: this.dag.toJSON()

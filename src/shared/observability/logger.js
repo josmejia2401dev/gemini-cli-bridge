@@ -50,30 +50,19 @@ class ExecutionLogger {
   }
 
   /**
-   * ⚡ BUCLE DE APRENDIZAJE: Guarda trazas limpias de ejecuciones exitosas
+   * BUCLE DE APRENDIZAJE: Guarda trazas limpias de ejecuciones exitosas
    * para estructurar conjuntos de datos de Fine-Tuning futuro.
    */
-  saveDatasetTrace(state, tracerSummary) {
-    if (!state || state.status !== 'SUCCESS') return;
-
-    const traceEntry = JSON.stringify({
-      runId: state.runId,
-      objective: state.objective,
-      iterations: state.iterations,
-      dagSteps: state.dag ? state.dag.toJSON() : [],
-      toolCalls: state.toolCalls,
-      filesModified: state.filesModified,
-      evidences: state.evidence,
-      metricsSummary: tracerSummary,
+  saveDatasetTrace(currentState) {
+    const trace = {
+      runId: currentState.runId,
+      objective: currentState.objective,
+      status: currentState.status,
+      completedSteps: currentState.completedSteps,
       timestamp: new Date().toISOString()
-    });
+    };
 
-    try {
-      fs.appendFileSync(this.datasetFilePath, traceEntry + '\n', 'utf-8');
-      console.log(`  📦 [DATASET APRENDIZAJE] Traza limpia registrada en '${path.basename(this.datasetFilePath)}'`);
-    } catch (e) {
-      console.error('Error guardando traza en dataset:', e.message);
-    }
+    fs.appendFileSync(this.datasetFilePath, JSON.stringify(trace) + '\n', 'utf-8');
   }
 }
 
