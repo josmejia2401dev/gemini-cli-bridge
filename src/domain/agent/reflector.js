@@ -1,35 +1,20 @@
 const ErrorAnalyzer = require('./errorAnalyzer');
+const SYSTEM_PROMPTS = require('../../shared/config/prompts');
 
-/**
- * Módulo de reflexión encargado de construir feedback inteligente y reportes RCA.
- */
 class Reflector {
   static createFeedback({ command, error, userReason, isRejected, episodicMemory }) {
     if (isRejected) {
-      if (userReason) {
-        return `[SISTEMA: El usuario denegó el comando '${command}'. Motivo: "${userReason}". Reajusta tu estrategia sin repetir este comando.]`;
-      }
-      return `[SISTEMA: El usuario denegó la ejecución del comando '${command}'. Bucle autónomo pausado.]`;
+      return SYSTEM_PROMPTS.REFLECTOR_FEEDBACK(command, userReason || "Acción cancelada por política de usuario");
     }
 
     if (error) {
       const analysis = ErrorAnalyzer.analyze(command, error, episodicMemory);
 
       if (analysis.isKnown) {
-        return `[SISTEMA - SOLUCIÓN EN MEMORIA ENCONTRADA]:
-El fallo en '${command}' es un ERROR CONOCIDO registrado previamente.
-Firma: "${analysis.signature}"
-Solución histórica aplicada: "${analysis.solution}"`;
+        return SYSTEM_PROMPTS.REFLECTOR_KNOWN_ERROR(command, analysis.signature, analysis.solution);
       }
 
-      return `[SISTEMA - ANÁLISIS DE CAUSA RAÍZ (RCA)]:
-Falló la ejecución del comando '${command}'.
-Firma del Error: "${analysis.signature}"
-
-STACKTRACE DEPURADO:
-${analysis.cleanedError}
-
-INSTRUCCIÓN: Analiza la causa raíz de este error inédito y propone la corrección en tu siguiente respuesta.`;
+      return SYSTEM_PROMPTS.REFLECTOR_RCA(command, analysis.signature, analysis.cleanedError);
     }
 
     return null;

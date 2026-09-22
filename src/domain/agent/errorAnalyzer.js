@@ -5,57 +5,49 @@
  */
 class ErrorAnalyzer {
   /**
-   * Elimina ruido del stacktrace (ruido de node_modules, trazas internas del SO, banderas de formato).
-   * @param {string} rawError - Texto crudo del error o stderr.
-   * @returns {string} Stacktrace depurado con la información esencial.
+   * Elimina ruido del stacktrace (ruido de SO, banderas de formato).
    */
   static cleanStackTrace(rawError) {
     if (!rawError || typeof rawError !== 'string') return '';
-
+    
     return rawError
       .split('\n')
       .filter(line => {
         const lower = line.toLowerCase();
-        // Filtrar ruido irrelevante de entorno y librerías de terceros
-        if (line.includes('node_modules')) return false;
+        // Filtrar ruido irrelevante estricto
         if (line.includes('internal/modules/cjs')) return false;
         if (line.includes('node:internal')) return false;
         if (lower.includes('npm err! a complete log of this run can be found in')) return false;
         return line.trim().length > 0;
       })
-      .slice(0, 15) // Mantener únicamente las 15 líneas más relevantes del núcleo del error
+      .slice(0, 40) // Aumentamos a 40 líneas para abarcar bien los logs completos de Maven/Spring
       .join('\n');
   }
 
   /**
-   * Extrae la firma principal del error (ej. "Error: Cannot find module 'x'").
-   * @param {string} cleanedError 
-   * @returns {string}
+   * Extrae la firma principal del error.
    */
   static extractSignature(cleanedError) {
     const lines = cleanedError.split('\n');
     const mainErrorLine = lines.find(line => 
-      line.includes('Error:') || 
-      line.includes('EXCEPTION') || 
-      line.includes('FAILED') ||
-      line.includes('SyntaxError') ||
-      line.includes('TypeError')
+       line.includes('Error:') || 
+       line.includes('EXCEPTION') || 
+       line.includes('FAILED') ||
+       line.includes('[ERROR]') ||
+       line.includes('SyntaxError') ||
+       line.includes('TypeError')
     );
-
     return mainErrorLine ? mainErrorLine.trim() : lines[0]?.trim() || 'Unknown Error';
   }
 
   /**
    * Analiza un error de consola consultando la memoria episódica.
-   * @param {string} command - Comando ejecutado.
-   * @param {string} rawError - Error original de consola.
-   * @param {Object} episodicMemory - Instancia de EpisodicMemory.
    */
   static analyze(command, rawError, episodicMemory) {
     const cleanedError = this.cleanStackTrace(rawError);
     const signature = this.extractSignature(cleanedError);
-
     let knownSolution = null;
+
     if (episodicMemory && typeof episodicMemory.findKnownSolution === 'function') {
       knownSolution = episodicMemory.findKnownSolution(signature, command);
     }

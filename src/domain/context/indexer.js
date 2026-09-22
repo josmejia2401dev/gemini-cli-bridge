@@ -4,13 +4,14 @@ const PatternEngine = require('./patternEngine');
 
 /**
  * Indexador de repositorio. Escanea archivos y extrae símbolos,
- * importaciones y exportaciones para construir el grafo de dependencias.
+ * importaciones y exportaciones para construir el grafo de dependencias
+ * con una estructura unificada e independiente del lenguaje.
  */
 class RepositoryIndexer {
   constructor(projectRoot) {
     this.projectRoot = projectRoot;
     this.patternEngine = new PatternEngine();
-    this.fileIndex = new Map(); // relPath -> { path, size, symbols, imports, exports }
+    this.fileIndex = new Map(); // relPath -> { path, language, size, symbols, imports, exports }
   }
 
   buildIndex(dir = this.projectRoot) {
@@ -39,17 +40,20 @@ class RepositoryIndexer {
       const imports = new Set();
       const exports = new Set();
       const ext = path.extname(fullPath).toLowerCase();
+      let language = 'other';
 
-      // ENRUTAMIENTO POR LENGUAJE (Estrategia)
+      // ENRUTAMIENTO POR LENGUAJE CON ESTRUCTURA NORMALIZADA
       if (['.js', '.jsx', '.ts', '.tsx'].includes(ext)) {
+        language = ['.ts', '.tsx'].includes(ext) ? 'typescript' : 'javascript';
         this.parseJavaScript(content, symbols, imports, exports);
       } else if (ext === '.java') {
+        language = 'java';
         this.parseJava(content, symbols, imports, exports);
       }
 
-      // Guardamos en el índice sin importar el lenguaje procesado
       this.fileIndex.set(relPath, {
         path: relPath,
+        language,
         size: content.length,
         symbols: Array.from(symbols),
         imports: Array.from(imports),
@@ -94,14 +98,14 @@ class RepositoryIndexer {
   }
 
   /**
-   * Extractor específico para ecosistema Java (Spring, J2EE, etc)
+   * Extractor específico para ecosistema Java (Spring, J2EE, etc.)
    */
   parseJava(content, symbols, imports, exports) {
     // 1. Clases, Interfaces, Enums y Records
     const classMatches = content.matchAll(/(?:class|interface|enum|record)\s+([a-zA-Z0-9_$]+)/g);
     for (const m of classMatches) symbols.add(m[1]);
 
-    // 2. Métodos (ignora palabras reservadas usadas como firmas accidentalmente)
+    // 2. Métodos
     const methodMatches = content.matchAll(/(?:public|private|protected|static|final|\s)*\s+[A-Za-z0-9_<>,\[\]]+\s+([a-zA-Z0-9_$]+)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s]+)?\s*\{/g);
     for (const m of methodMatches) {
       if (!['catch', 'if', 'while', 'for', 'switch', 'return', 'else'].includes(m[1])) {
@@ -115,7 +119,7 @@ class RepositoryIndexer {
 
     // 4. Exportaciones conceptuales (Paquete y clase principal pública)
     const packageMatches = content.matchAll(/package\s+([a-zA-Z0-9_$.]+)\s*;/g);
-    for (const m of packageMatches) exports.add(m[1]); // Agregamos el paquete para saber su dominio
+    for (const m of packageMatches) exports.add(m[1]);
 
     const publicClassMatches = content.matchAll(/public\s+(?:abstract\s+)?(?:class|interface|enum|record)\s+([a-zA-Z0-9_$]+)/g);
     for (const m of publicClassMatches) exports.add(m[1]);

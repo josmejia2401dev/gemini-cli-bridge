@@ -13,7 +13,15 @@ class GeminiPlaywrightClient extends ILLMClient {
     this.page = null;
   }
 
+  sanitizeUrl(rawUrl) {
+    if (!rawUrl || typeof rawUrl !== 'string') return 'https://gemini.google.com/app';
+    const match = rawUrl.match(/https?:\/\/[^\s\)"'\]]+/i);
+    return match ? match[0] : 'https://gemini.google.com/app';
+  }
+
   async connect(targetUrl = 'https://gemini.google.com/app') {
+    const cleanUrl = this.sanitizeUrl(targetUrl);
+
     this.context = await chromium.launchPersistentContext(this.sessionDir, {
       headless: false,
       channel: 'chrome',
@@ -25,7 +33,7 @@ class GeminiPlaywrightClient extends ILLMClient {
     this.page = this.context.pages().length > 0 ? this.context.pages()[0] : await this.context.newPage();
 
     try {
-      await this.page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+      await this.page.goto(cleanUrl, { waitUntil: 'domcontentloaded' });
     } catch (navError) {
       if (!navError.message.includes('ERR_ABORTED')) {
         throw navError;
@@ -39,17 +47,10 @@ class GeminiPlaywrightClient extends ILLMClient {
     }
   }
 
-
   async generate({ prompt, fileToUpload = null }) {
     const text = await this.sendPrompt(prompt, fileToUpload);
     return { text };
   }
-
-
-
-
-
-
 
   async openMenu() {
     try {
@@ -63,24 +64,19 @@ class GeminiPlaywrightClient extends ILLMClient {
         'button:has(mat-icon[fonticon="plus"])'
       ].join(', ');
 
-      // 1. Garantizamos seleccionar ÚNICAMENTE el botón que es visible en pantalla
       const plusBtn = this.page.locator(selector).locator('visible=true').first();
-
       let clicked = false;
 
       if (await plusBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
         try {
-          // Clic estándar de Playwright
           await plusBtn.click({ timeout: 1500 });
           clicked = true;
         } catch (clickErr) {
-          // Fallback A: Clic forzado atravesando capas de Angular (mat-ripple)
           await plusBtn.click({ force: true, timeout: 1500 });
           clicked = true;
         }
       }
 
-      // Fallback B: Inyección directa vía JavaScript si la UI bloqueó Playwright
       if (!clicked) {
         clicked = await this.page.evaluate((sel) => {
           const btns = Array.from(document.querySelectorAll(sel));
@@ -98,17 +94,14 @@ class GeminiPlaywrightClient extends ILLMClient {
       } else {
         console.log('  [!] No se detectó botón + visible en pantalla.');
       }
-
     } catch (e) {
       console.log('  [!] No se pudo hacer clic en el botón +. Los flujos podrían fallar.');
     }
   }
 
-  // --- MÉTODO 1: Flujo "Importar código > Subir carpeta" ---
   async tryImportCodeFlow() {
     console.log('⏳ Intentando flujo: Importar código > Subir carpeta...');
     try {
-      // Helper multinivel para ejecutar cada clic de forma resiliente
       const robustClick = async (selectorsArray, stepName) => {
         const selector = selectorsArray.join(', ');
         const target = this.page.locator(selector).locator('visible=true').first();
@@ -119,13 +112,11 @@ class GeminiPlaywrightClient extends ILLMClient {
             await target.click({ timeout: 1500 });
             clicked = true;
           } catch (err) {
-            // Fallback A: Forzar el clic si el overlay o mat-ripple bloquea
             await target.click({ force: true, timeout: 1500 });
             clicked = true;
           }
         }
 
-        // Fallback B: Inyección directa vía JS nativo buscando dimensiones físicas reales
         if (!clicked) {
           clicked = await this.page.evaluate((sel) => {
             const elements = Array.from(document.querySelectorAll(sel));
@@ -146,7 +137,6 @@ class GeminiPlaywrightClient extends ILLMClient {
         return clicked;
       };
 
-      // 1. Clic en "Más subidas"
       const step1Ok = await robustClick([
         'button.more-upload-button',
         '[data-test-id="more-tools-button"]',
@@ -158,7 +148,6 @@ class GeminiPlaywrightClient extends ILLMClient {
 
       if (!step1Ok) return false;
 
-      // 2. Clic en "Importar código"
       const step2Ok = await robustClick([
         'code-import button',
         'button:has(span:has-text("Importar código"))',
@@ -169,7 +158,6 @@ class GeminiPlaywrightClient extends ILLMClient {
 
       if (!step2Ok) return false;
 
-      // 3. Clic en "Subir carpeta"
       const step3Ok = await robustClick([
         '[data-test-id="upload-code-folder-button"]',
         'code-folder-uploader button',
@@ -180,13 +168,12 @@ class GeminiPlaywrightClient extends ILLMClient {
 
       if (!step3Ok) return false;
 
-      return true; // Se completaron exitosamente los 3 clics
+      return true;
     } catch (e) {
       return false;
     }
   }
 
-  // --- MÉTODO 2: Flujo Clásico "Subir archivos" ---
   async tryUploadFilesFlow() {
     console.log('⏳ Intentando flujo clásico: Subir archivos...');
     try {
@@ -202,24 +189,19 @@ class GeminiPlaywrightClient extends ILLMClient {
         'button:has(mat-icon[fonticon="attach_file"])'
       ].join(', ');
 
-      // 1. Selecciona únicamente el botón que es visible en pantalla
       const uploadBtn = this.page.locator(selector).locator('visible=true').first();
-
       let clicked = false;
 
       if (await uploadBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
         try {
-          // Clic estándar de Playwright
           await uploadBtn.click({ timeout: 1500 });
           clicked = true;
         } catch (clickErr) {
-          // Fallback A: Clic forzado atravesando capas de Angular / mat-ripple
           await uploadBtn.click({ force: true, timeout: 1500 });
           clicked = true;
         }
       }
 
-      // Fallback B: Inyección directa vía JavaScript nativo buscando elementos con dimensiones físicas
       if (!clicked) {
         clicked = await this.page.evaluate((sel) => {
           const btns = Array.from(document.querySelectorAll(sel));
@@ -243,30 +225,25 @@ class GeminiPlaywrightClient extends ILLMClient {
     }
   }
 
-  // --- MÉTODO 3: Flujo Móvil / Pantalla Pequeña "Archivos" ---
   async tryMobileUploadFlow() {
     console.log('⏳ Intentando flujo móvil/responsivo: Archivos...');
     try {
       const selector = 'images-files-uploader[data-test-id="uploader-images-files-button-advanced"] button';
-
-      // 1. Esperamos a que el elemento exista en el HTML (no le pedimos a Playwright que verifique si es "visible", solo que exista)
       await this.page.waitForSelector(selector, { state: 'attached', timeout: 2000 });
 
-      // 2. Ejecutamos el clic mediante JavaScript nativo (Igual que en la consola del navegador)
       await this.page.evaluate((sel) => {
         document.querySelector(sel).click();
       }, selector);
 
-      return true; // Si el evaluate pasa, el clic se ejecutó y abrirá el FileChooser
+      return true;
     } catch (e) {
       return false;
     }
   }
 
-
-
   async sendPrompt(prompt, filePath = null) {
-    const inputBox = this.page.locator('div[contenteditable="true"]').first();
+    const inputSelector = 'div[contenteditable="true"]';
+    const inputBox = this.page.locator(inputSelector).first();
     await inputBox.waitFor({ state: 'visible' });
     let finalPrompt = prompt;
 
@@ -279,13 +256,10 @@ class GeminiPlaywrightClient extends ILLMClient {
       try {
         console.log('⏳ Interceptando el explorador de archivos nativo...');
 
-        // 1. Escuchamos el evento de FileChooser
         const fileChooserPromise = this.page.waitForEvent('filechooser', { timeout: 8000 }).catch(() => null);
 
-        // 2. Abrimos el menú principal ("+") usando Try-Click
         await this.openMenu();
 
-        // 3. Orquestación de Flujos
         let uploadTriggered = await this.tryUploadFilesFlow();
 
         if (!uploadTriggered) {
@@ -297,7 +271,6 @@ class GeminiPlaywrightClient extends ILLMClient {
         }
 
         if (uploadTriggered) {
-          // Si hicimos clic en un botón real, Playwright captura la ventana de Windows
           const fileChooser = await fileChooserPromise;
           if (fileChooser) {
             await fileChooser.setFiles(filePath);
@@ -306,7 +279,6 @@ class GeminiPlaywrightClient extends ILLMClient {
             throw new Error("El FileChooser nativo no se abrió a tiempo.");
           }
         } else {
-          // 5. Fallback extremo: Inyección directa en el DOM (No abre ventana nativa)
           console.log('⏳ UI no detectada. Intentando inyección directa en DOM...');
           const hiddenInput = this.page.locator('input[type="file"].hidden-file-input, input[type="file"][accept*=".txt"]').first();
           if (await hiddenInput.count() > 0) {
@@ -327,10 +299,14 @@ class GeminiPlaywrightClient extends ILLMClient {
       }
     }
 
-    await inputBox.click();
     console.log('💬 Escribiendo instrucción...');
-    await this.page.keyboard.insertText(finalPrompt);
-    await delay(500);
+    if (finalPrompt.length > 50) {
+      await this.pasteFromClipboard(this.page, inputSelector, finalPrompt);
+    } else {
+      await this.typeHumanLike(this.page, inputSelector, finalPrompt);
+    }
+
+    await delay(1000);
     await this.page.keyboard.press('Enter');
 
     console.log('⏳ Esperando inicio de generación...');
@@ -394,7 +370,7 @@ class GeminiPlaywrightClient extends ILLMClient {
         await stopBtn.click();
       }
     } catch (e) {
-      // Ignoramos el error silenciosamente si el botón no está visible
+      // Ignoramos el error silenciosamente
     }
   }
 
@@ -412,6 +388,37 @@ class GeminiPlaywrightClient extends ILLMClient {
     } catch (error) {
       return 'Error leyendo el historial: ' + error.message;
     }
+  }
+
+  /**
+   * Envía texto simulando el pegado desde el portapapeles del usuario.
+   * Activa los eventos nativos 'paste' e 'input' del DOM.
+   */
+  async pasteFromClipboard(page, selector, text) {
+    const locator = page.locator(selector).first();
+    await locator.focus();
+
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+
+    await page.evaluate(async (content) => {
+      await navigator.clipboard.writeText(content);
+    }, text);
+
+    const isMac = process.platform === 'darwin';
+    const modifier = isMac ? 'Meta' : 'Control';
+    await page.keyboard.press(`${modifier}+V`);
+  }
+
+  /**
+   * Escribe texto carácter por carácter simulando la velocidad de tecleo humana.
+   */
+  async typeHumanLike(page, selector, text) {
+    const locator = page.locator(selector).first();
+    await locator.focus();
+
+    await locator.pressSequentially(text, {
+      delay: Math.floor(Math.random() * 30) + 15
+    });
   }
 
   async close() {

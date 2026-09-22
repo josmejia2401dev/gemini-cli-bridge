@@ -1,26 +1,17 @@
 const path = require('path');
 const RepositoryIntelligence = require('./repositoryIntel');
+const SYSTEM_PROMPTS = require('../../shared/config/prompts');
 
-/**
- * ImpactAnalysis
- * Analiza determinísticamente qué archivos y pruebas colindantes
- * podrían verse afectados al modificar un archivo objetivo.
- */
 class ImpactAnalysis {
   constructor(projectRoot) {
     this.projectRoot = projectRoot;
     this.intel = new RepositoryIntelligence(projectRoot);
   }
 
-  /**
-   * Ejecuta el análisis predictivo de impacto.
-   * @param {string} targetFile - Ruta o nombre del archivo objetivo.
-   */
   analyze(targetFile) {
     const ext = path.extname(targetFile);
     const baseName = path.basename(targetFile, ext);
 
-    // Consulta de importaciones en milisegundos
     const importersResult = this.intel.whoImports(baseName);
     
     const affectedModules = [];
@@ -47,28 +38,11 @@ class ImpactAnalysis {
     };
   }
 
-  /**
-   * Construye el aviso con énfasis de validación para la IA.
-   */
   buildPromptNotice(targetFile, affectedModules, associatedTests) {
     if (affectedModules.length === 0 && associatedTests.length === 0) {
       return null;
     }
-
-    let notice = `[SISTEMA: ANÁLISIS PREDICTIVO DE IMPACTO DETERMINÍSTICO]\n`;
-    notice += `Atención: El archivo objetivo "${targetFile}" es consumido por los siguientes archivos de tu proyecto:\n`;
-    
-    if (affectedModules.length > 0) {
-      notice += `- Módulos/Controladores dependientes: ${affectedModules.join(', ')}\n`;
-    }
-    if (associatedTests.length > 0) {
-      notice += `- Archivos de pruebas asociados: ${associatedTests.join(', ')}\n`;
-    }
-
-    notice += `\nINSTRUCCIÓN OBLIGATORIA PARA LA IA:\n`;
-    notice += `Este listado fue generado mediante análisis estático de dependencias. DEBES VALIDAR si tus modificaciones en "${targetFile}" alteran firmas de métodos, interfaces o contratos, y de ser así, incluir la actualización en cascada de estos archivos afectados dentro de tu plan de trabajo.`;
-
-    return notice;
+    return SYSTEM_PROMPTS.IMPACT_NOTICE(targetFile, affectedModules, associatedTests);
   }
 }
 

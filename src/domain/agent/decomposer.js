@@ -1,54 +1,66 @@
 const OutputParser = require('../../shared/utils/outputParser');
 const TaskDAG = require('./dag');
+const SYSTEM_PROMPTS = require('../../shared/config/prompts');
+const { taskPlanSchema } = require('../../shared/schemas/toolSchemas');
 
 class TaskDecomposer {
-  /**
-   * Genera el prompt estructurado para la planificación.
-   */
-  getDecompositionPrompt(userObjective) {
-    return `[SISTEMA: PLANIFICADOR DE TAREAS DAG]
-Debes analizar la siguiente solicitud del usuario y descomponerla en un Grafo Acíclico Dirigido (DAG) de subtareas lógicas, atómicas y ordenadas según sus dependencias.
-
-SOLICITUD: "${userObjective}"
-
-REGLAS DE DESCOMPOSICIÓN:
-- Asigna identificadores únicos a cada tarea ("task_1", "task_2", etc.).
-- Identifica qué tareas dependen de la finalización de otras (dependencies).
-- Las tareas sin dependencias podrán ejecutarse de inmediato.
-
-INSTRUCCIÓN DE SALIDA:
-Responde ÚNICAMENTE con un Objeto JavaScript estructurado así (usa backticks \` para los textos):
-
-{
-  tool: "task_plan",
-  arguments: {
-    tasks: [
-      { id: "task_1", description: \`Analizar estructura del proyecto\`, dependencies: [] },
-      { id: "task_2", description: \`Crear configuración y middleware\`, dependencies: ["task_1"] },
-      { id: "task_3", description: \`Ejecutar pruebas del módulo\`, dependencies: ["task_2"] }
-    ]
-  }
-}`;
+  getDecompositionPrompt(userObjective, rejectionFeedback = null) {
+    return SYSTEM_PROMPTS.TASK_DECOMPOSER(userObjective, rejectionFeedback);
   }
 
-  /**
-   * Transforma la respuesta de texto de Gemini en una instancia de TaskDAG.
-   */
   parseResponse(responseText, userObjective) {
+    // 1. Intentar parseo estándar con OutputParser y esquema Zod
     const parseResult = OutputParser.parseToolCall(responseText);
 
-    if (
-      parseResult.success &&
-      parseResult.data?.tool === 'task_plan' &&
-      Array.isArray(parseResult.data.arguments?.tasks)
-    ) {
-      return new TaskDAG(parseResult.data.arguments.tasks);
+    if (parseResult.success && parseResult.data?.tool === 'task_plan') {
+      const validation = taskPlanSchema.safeParse(parseResult.data.arguments);
+      if (validation.success && validation.data.tasks.length > 0) {
+        return new TaskDAG(validation.data.tasks);
+      }
     }
 
-    // Fallback directo si la tarea es simple o Gemini no emite estructura (KISS)
+    // 2. FALLBACK DE RESCATE RESILIENTE: Extrae las tareas incluso si la IA omitió comillas en 'description'
+    const regexTasks = this.extractTasksWithRegex(responseText);
+    if (regexTasks.length > 0) {
+      console.log(`  🧠 [TASK DAG] Se recuperaron ${regexTasks.length} subtarea(s) mediante el extractor de rescate.`);
+      return new TaskDAG(regexTasks);
+    }
+
+    // 3. Fallback atómico final si todo falla
+    console.log('  ⚠️ [TASK DAG] No se pudo extraer la estructura de plan. Usando fallback de tarea única.');
     return new TaskDAG([
       { id: 'task_1', description: userObjective, dependencies: [] }
     ]);
+  }
+
+  extractTasksWithRegex(text) {
+    const tasks = [];
+    const taskObjects = text.match(/\{[^{}]*description[^{}]*\}/gi) || [];
+
+    for (const rawObj of taskObjects) {
+      const idMatch = rawObj.match(/(?:id|["']id["'])\s*:\s*["']?([a-zA-Z0-9_\-]+)["']?/i);
+      const id = idMatch ? idMatch[1].trim() : null;
+
+      const depsMatch = rawObj.match(/(?:dependencies|["']dependencies["'])\s*:\s*\[(.*?)\]/i);
+      const depsRaw = depsMatch ? depsMatch[1].trim() : '';
+      const dependencies = depsRaw
+        ? depsRaw.split(',').map(d => d.replace(/[`"'\s]/g, '')).filter(Boolean)
+        : [];
+
+      let description = null;
+      const descMatch = rawObj.match(/(?:description|["']description["'])\s*:\s*([\s\S]*?)(?:,\s*(?:dependencies|["']dependencies["'])|\s*(?:dependencies|["']dependencies["'])|\s*\}$)/i);
+      
+      if (descMatch) {
+        description = descMatch[1].trim();
+        description = description.replace(/^[`"'\s]+|[`"'\s,]+$/g, '').trim();
+      }
+
+      if (id && description) {
+        tasks.push({ id, description, dependencies });
+      }
+    }
+
+    return tasks;
   }
 }
 

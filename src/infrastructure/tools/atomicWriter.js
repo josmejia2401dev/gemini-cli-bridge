@@ -22,7 +22,7 @@ class AtomicWriter {
 
   /**
    * Escribe el contenido en un archivo temporal (.tmp), valida la sintaxis
-   * y realiza el reemplazo atómico en disco si es correcto.
+   * según la extensión del archivo y realiza el reemplazo atómico en disco.
    * @param {string} projectRoot - Ruta raíz del proyecto.
    * @param {string} filePath - Ruta relativa del archivo.
    * @param {string} content - Contenido completo en código.
@@ -41,20 +41,35 @@ class AtomicWriter {
     fs.mkdirSync(path.dirname(absPath), { recursive: true });
     fs.writeFileSync(tmpPath, content, 'utf-8');
 
-    // 3. Validación sintáctica determinística por extensión
+    // 3. Validación sintáctica determinística según extensión
     const ext = path.extname(filePath).toLowerCase();
     try {
-      if (ext === '.js' || ext === '.cjs' || ext === '.mjs') {
+      if (['.js', '.cjs', '.mjs'].includes(ext)) {
         execSync(`node --check "${tmpPath}"`, { stdio: 'pipe' });
       } else if (ext === '.json') {
         JSON.parse(content);
+      } else if (['.ts', '.tsx'].includes(ext)) {
+        // Para TypeScript, intentamos validación con tsc sin emitir JS si existe en el entorno local
+        try {
+          execSync(`npx --no-install tsc --noEmit "${tmpPath}"`, { cwd: projectRoot, stdio: 'pipe' });
+        } catch (tscErr) {
+          // Si tsc no está disponible o falla por falta de config, aplicamos verificación estructural básica
+          if (tscErr.code === 'ENOENT' || tscErr.message.includes('not found')) {
+            this.validateBasicStructure(content);
+          } else {
+            throw tscErr;
+          }
+        }
+      } else {
+        // Archivos de texto plano / estilos / plantillas: verificación de estructura básica
+        this.validateBasicStructure(content);
       }
 
       // 4. Swap Atómico (Reemplazo transparente únicamente tras pasar la validación)
       fs.renameSync(tmpPath, absPath);
       return { success: true, filePath, integrity: 'VALIDATED' };
     } catch (syntaxError) {
-      // 5. Destrucción del archivo temporal si falla la sintaxis. El archivo original JAMÁS se modifica.
+      // 5. Destrucción del archivo temporal si falla la sintaxis
       if (fs.existsSync(tmpPath)) {
         fs.unlinkSync(tmpPath);
       }
@@ -64,6 +79,16 @@ class AtomicWriter {
         : syntaxError.message;
 
       throw new Error(`[ERROR DE SINTAXIS EN CÓDIGO GENERADO] El archivo '${filePath}' NO se modificó en disco para evitar corrupción. Motivo: ${details}`);
+    }
+  }
+
+  /**
+   * Validación básica estructural para archivos sin linter/compilador nativo directo.
+   * Evita guardar contenidos nulos o no textuales.
+   */
+  static validateBasicStructure(content) {
+    if (typeof content !== 'string') {
+      throw new Error('El contenido del archivo no es una cadena de texto válida.');
     }
   }
 }

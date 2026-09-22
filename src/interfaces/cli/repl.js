@@ -10,8 +10,12 @@ class REPL {
     try {
       return await this.rl.question(prompt);
     } catch (err) {
-      if (err.name === 'AbortError' || err.code === 'ABORT_ERR') {
-        return ''; // Retorna vacío de forma segura si el usuario interrumpe con Ctrl+C
+      if (
+        err.name === 'AbortError' || 
+        err.code === 'ABORT_ERR' || 
+        err.code === 'ERR_USE_AFTER_CLOSE'
+      ) {
+        return ''; // Retorna vacío de forma segura si la consola se cerró o interrumpió
       }
       throw err;
     }
@@ -25,11 +29,9 @@ class REPL {
     const lines = [];
 
     while (true) {
-      // Usamos el mismo askQuestion de la clase
       const line = await this.askQuestion('  | ');
 
-      // Si el usuario escribe .send (o si se cancela con Ctrl+C)
-      if (line.trim() === '.send') {
+      if (line.trim() === '.send' || this.rl.closed) {
         break;
       }
 
@@ -40,7 +42,9 @@ class REPL {
   }
 
   close() {
-    this.rl.close();
+    try {
+      this.rl.close();
+    } catch (e) {}
   }
 }
 

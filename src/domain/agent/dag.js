@@ -35,14 +35,26 @@ class TaskDAG {
     return executables;
   }
 
+  // --- MÉTODOS FORMALES DE TRANSICIÓN DE ESTADO ---
   updateStatus(id, status) {
     if (this.tasks.has(id)) {
       this.tasks.get(id).status = status;
     }
   }
 
+  markInProgress(id) {
+    this.updateStatus(id, 'in_progress');
+  }
+
+  markCompleted(id) {
+    this.updateStatus(id, 'completed');
+  }
+
+  markFailed(id) {
+    this.updateStatus(id, 'failed');
+  }
+
   isCompleted() {
-    // Map usa .size, no .length
     if (!this.tasks || this.tasks.size === 0) {
       return false;
     }
@@ -56,7 +68,6 @@ class TaskDAG {
     return Array.from(this.tasks.values()).some(t => t.status === 'failed');
   }
 
-  // Imprime el árbol de subtareas en la terminal antes de iniciar acciones
   formatSummary() {
     let output = '\n  📋 [PLAN DE EJECUCIÓN - TASK DAG]\n';
     output += '  ===============================================================\n';
@@ -82,7 +93,6 @@ class TaskDAG {
 
   static fromJSON(data) {
     if (!data) return new TaskDAG([]);
-    // Permite deserializar tanto un Arreglo directos [...] como un Objeto { tasks: [...] }
     const tasksArray = Array.isArray(data) ? data : (data.tasks || Object.values(data));
     return new TaskDAG(tasksArray);
   }

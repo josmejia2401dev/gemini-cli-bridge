@@ -2,18 +2,24 @@ const fs = require('fs');
 const path = require('path');
 
 const REPL = require('../interfaces/cli/repl');
-const CommandDispatcher = require('../interfaces/core/commandDispatcher');
 const LLMFactory = require('../infrastructure/llm/llmFactory');
 
 const ModelRouter = require('../infrastructure/llm/modelRouter');
 const ToolRegistry = require('../infrastructure/tools/registry');
 const AgentRuntime = require('../domain/agent/runtime');
+const ExecutionDecisionEngine = require('../domain/agent/decisionEngine');
 const CheckpointManager = require('../infrastructure/persistence/checkpoint');
 const MemoryDatabase = require('../infrastructure/persistence/db');
 const EpisodicMemory = require('../infrastructure/persistence/episodic');
 const ExecutionLogger = require('../shared/observability/logger');
 const paths = require('../shared/config/paths');
 const SYSTEM_PROMPTS = require('../shared/config/prompts');
+
+const cleanUrlString = (raw) => {
+  if (!raw || typeof raw !== 'string') return 'https://gemini.google.com/app';
+  const match = raw.match(/https?:\/\/[^\s\)"'\]]+/i);
+  return match ? match[0] : raw.trim();
+};
 
 class Application {
   constructor() {
@@ -33,9 +39,7 @@ class Application {
         pkg.name = parsed.name || pkg.name;
         pkg.version = parsed.version || pkg.version;
         pkg.author = typeof parsed.author === 'object' ? (parsed.author.name || 'N/A') : (parsed.author || 'N/A');
-      } catch (e) {
-        // Fallback silencioso si falla la lectura del package.json
-      }
+      } catch (e) { }
     }
 
     if (fs.existsSync(paths.BANNER_FILE)) {
@@ -63,17 +67,19 @@ class Application {
     return {};
   }
 
-  async resolveProjectRoot(repl) {
-    let projectRoot = process.argv[2];
+  async resolveProjectRoot(repl, forceAsk = false) {
+    let projectRoot = forceAsk ? null : process.argv[2];
 
-    if (!projectRoot && fs.existsSync(this.repoPathFile)) {
+    if (!forceAsk && !projectRoot && fs.existsSync(this.repoPathFile)) {
       const savedPath = fs.readFileSync(this.repoPathFile, 'utf-8').trim();
       if (fs.existsSync(path.resolve(savedPath))) projectRoot = savedPath;
     }
 
     while (!projectRoot || !fs.existsSync(path.resolve(projectRoot))) {
+      if (repl.rl.closed) process.exit(0);
       if (projectRoot) console.log(`  La ruta "${projectRoot}" es inválida.`);
-      const inputPath = await repl.askQuestion('  Ingresa la ruta del repositorio (Enter para usar actual "."): ');
+      const inputPath = await repl.askQuestion('  Ingresa la ruta del repositorio para este chat (Enter para usar actual "."): ');
+      if (repl.rl.closed) process.exit(0);
       projectRoot = inputPath.trim() || '.';
     }
 
@@ -84,80 +90,119 @@ class Application {
   }
 
   async resolveTargetChatUrl(repl) {
-    if (!fs.existsSync(this.chatUrlFile)) {
-      return { targetUrl: 'https://gemini.google.com/app', isNewChat: true };
-    }
+    const askForChatName = async () => {
+      let chatName = '';
+      while (!chatName) {
+        if (repl.rl.closed) process.exit(0);
+        const rawName = await repl.askQuestion('  Ingresa el nombre para el nuevo chat: ');
+        if (repl.rl.closed) process.exit(0);
 
-    const savedUrl = fs.readFileSync(this.chatUrlFile, 'utf-8').trim();
-    if (!savedUrl.includes('/app/')) {
-      return { targetUrl: 'https://gemini.google.com/app', isNewChat: true };
-    }
+        chatName = rawName
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim()
+          .replace(/\s+/g, '-')
+          .substring(0, 50);
 
-    const chatsFile = paths.SAVED_CHATS_FILE;
-    let savedChats = {};
-    if (fs.existsSync(chatsFile)) {
-      try { savedChats = JSON.parse(fs.readFileSync(chatsFile, 'utf-8')); }
-      catch (e) { console.error('  Error al leer los chats guardados.'); }
-    }
-
-    const chatNames = Object.keys(savedChats);
-    const hasSavedChats = chatNames.length > 0;
+        if (!chatName) {
+          console.log('  [!] El nombre del chat es obligatorio.');
+        }
+      }
+      return chatName;
+    };
 
     while (true) {
-      console.log('\n  Se detectó actividad previa.');
-      console.log('  [1] Retomar último chat activo');
-      console.log('  [2] Iniciar Nuevo chat');
+      if (repl.rl.closed) process.exit(0);
 
-      let exitOption = '3';
-      if (hasSavedChats) {
-        exitOption = '4';
-        console.log('  [3] Cargar un chat guardado');
-        console.log('  [4] Salir');
-      } else {
-        console.log('  [3] Salir');
+      const chatsFile = paths.SAVED_CHATS_FILE;
+      let savedChats = {};
+      if (fs.existsSync(chatsFile)) {
+        try { savedChats = JSON.parse(fs.readFileSync(chatsFile, 'utf-8')); }
+        catch (e) { console.error('  Error al leer los chats guardados.'); }
+      }
+      const chatNames = Object.keys(savedChats);
+
+      let savedUrl = '';
+      let hasActiveChat = false;
+      if (fs.existsSync(this.chatUrlFile)) {
+        savedUrl = cleanUrlString(fs.readFileSync(this.chatUrlFile, 'utf-8'));
+        hasActiveChat = savedUrl.includes('/app/');
       }
 
-      const choice = (await repl.askQuestion('  Selecciona una opción: ')).trim();
+      console.log('\n  [GESTIÓN DE SESIÓN]');
+
+      if (hasActiveChat) {
+        console.log('  [1] Retomar último chat activo');
+      } else {
+        console.log('  [1] Retomar último chat activo (No disponible)');
+      }
+
+      console.log('  [2] Iniciar nuevo chat');
+
+      if (chatNames.length > 0) {
+        console.log('  [3] Seleccionar un chat específico');
+      } else {
+        console.log('  [3] Seleccionar un chat específico (No hay chats guardados)');
+      }
+
+      console.log('  [4] Salir');
+
+      const choice = (await repl.askQuestion('\n  Selecciona una opción: ')).trim();
+      if (repl.rl.closed) process.exit(0);
 
       if (choice === '1') {
-        return { targetUrl: savedUrl, isNewChat: false };
+        if (!hasActiveChat) {
+          console.log('  [!] No hay un chat activo previo para retomar.');
+          continue;
+        }
+        return { targetUrl: savedUrl, isNewChat: false, chatName: null };
       } else if (choice === '2') {
-        return { targetUrl: 'https://gemini.google.com/app', isNewChat: true };
-      } else if (hasSavedChats && choice === '3') {
-        console.log('\n  [CHATS GUARDADOS]');
+        const chatName = await askForChatName();
+        return { targetUrl: 'https://gemini.google.com/app', isNewChat: true, chatName };
+      } else if (choice === '3') {
+        if (chatNames.length === 0) {
+          console.log('\n  ⚠️ No hay chats guardados disponibles.');
+          continue;
+        }
+
+        console.log('\n  [CHATS DISPONIBLES]');
         chatNames.forEach((name, index) => {
           console.log(`  [${index + 1}] ${name}`);
         });
 
-        const chatChoice = await repl.askQuestion('  Ingresa el número del chat: ');
-        const selectedIndex = parseInt(chatChoice.trim()) - 1;
+        const chatChoice = await repl.askQuestion('\n  Ingresa el número del chat que deseas cargar (o Enter para volver): ');
+        if (repl.rl.closed) process.exit(0);
+        if (!chatChoice.trim()) continue;
+
+        const selectedIndex = parseInt(chatChoice.trim(), 10) - 1;
 
         if (selectedIndex >= 0 && selectedIndex < chatNames.length) {
           const selectedName = chatNames[selectedIndex];
-          const targetUrl = savedChats[selectedName];
+          const targetUrl = cleanUrlString(savedChats[selectedName]);
           fs.writeFileSync(this.chatUrlFile, targetUrl, 'utf-8');
-          console.log(`  [SISTEMA] Se cargará el chat: "${selectedName}"`);
-          return { targetUrl, isNewChat: false };
+          console.log(`\n  [SISTEMA] Se cargará el chat: "${selectedName}"`);
+          return { targetUrl, isNewChat: false, chatName: selectedName };
         } else {
           console.log('  [!] Número de chat inválido.');
         }
-      } else if (choice === exitOption) {
+      } else if (choice === '4') {
         console.log('  Cerrando aplicación...');
         repl.close();
         process.exit(0);
       } else {
-        console.log(`\n  [!] Opción no reconocida. Por favor ingresa una opción del 1 al ${exitOption}.`);
+        console.log('\n  [!] Opción no reconocida. Por favor ingresa una opción del 1 al 4.');
       }
     }
   }
 
-  setupSigintHandler(repl, llmClient) {
+  setupSigintHandler(repl, getLlmClient) {
     global.isProcessing = false;
     global.abortLoop = false;
     let sigintCount = 0;
 
     repl.rl.on('SIGINT', async () => {
-      if (global.isProcessing) {
+      const llmClient = typeof getLlmClient === 'function' ? getLlmClient() : null;
+      if (global.isProcessing && llmClient) {
         console.log('\n  🛑 [SISTEMA] Interrumpiendo IA. Deteniendo generación...');
         global.abortLoop = true;
         await llmClient.stopGeneration();
@@ -168,7 +213,7 @@ class Application {
           setTimeout(() => { sigintCount = 0; }, 2000);
         } else {
           console.log('\n  Cerrando aplicación...');
-          try { await llmClient.close(); } catch (e) { }
+          try { if (llmClient) await llmClient.close(); } catch (e) { }
           repl.close();
           process.exit(0);
         }
@@ -180,31 +225,40 @@ class Application {
     this.displayBanner();
     const repl = new REPL();
     const logger = new ExecutionLogger();
-    let projectRoot = await this.resolveProjectRoot(repl);
 
-    // 1. Determinar el proveedor e instanciar el cliente PRIMERO
+    let llmClient = null;
+
+    this.setupSigintHandler(repl, () => llmClient);
+
+    process.on('unhandledRejection', (reason) => {
+      if (reason && (reason.code === 'ABORT_ERR' || reason.name === 'AbortError')) return;
+      if (reason && reason.message && reason.message.includes('closed')) return;
+      console.error('\n  [!] Error no controlado:', reason?.message || reason);
+    });
+
     const providerType = (process.env.LLM_PROVIDER || 'PLAYWRIGHT').toUpperCase();
     console.log(`\n  Iniciando motor de IA (${providerType} Provider)...`);
 
-    const llmClient = LLMFactory.createClient(providerType, {
+    let targetUrl = '';
+    let isNewChat = false;
+    let chatName = null;
+
+    if (providerType === 'PLAYWRIGHT') {
+      const sessionInfo = await this.resolveTargetChatUrl(repl);
+      targetUrl = cleanUrlString(sessionInfo.targetUrl);
+      isNewChat = sessionInfo.isNewChat;
+      chatName = sessionInfo.chatName;
+    } else {
+      targetUrl = process.env.LLM_MODEL || (providerType === 'QWEN_API' ? 'qwen-coder-plus' : 'gemini-1.5-pro');
+    }
+
+    let projectRoot = await this.resolveProjectRoot(repl, isNewChat);
+
+    llmClient = LLMFactory.createClient(providerType, {
       sessionDir: this.sessionDir,
       chatUrlFile: this.chatUrlFile
     });
 
-    let targetUrl = '';
-    let isNewChat = false;
-
-    // 2. Solo resolver sesión de navegador si el proveedor es PLAYWRIGHT
-    if (providerType === 'PLAYWRIGHT') {
-      const sessionInfo = await this.resolveTargetChatUrl(repl);
-      targetUrl = sessionInfo.targetUrl;
-      isNewChat = sessionInfo.isNewChat;
-    } else {
-      // Para APIs (GEMINI_API, QWEN_API, etc.), targetUrl representa el nombre del modelo
-      targetUrl = process.env.LLM_MODEL || (providerType === 'QWEN_API' ? 'qwen-coder-plus' : 'gemini-1.5-pro');
-    }
-
-    // 3. Conectar el cliente con el parámetro correspondiente
     await llmClient.connect(targetUrl);
 
     const modelRouter = new ModelRouter(llmClient);
@@ -213,6 +267,12 @@ class Application {
     const checkpointManager = new CheckpointManager(dbConnection);
     const episodicMemory = new EpisodicMemory(dbConnection);
 
+    const decisionEngine = new ExecutionDecisionEngine({
+      geminiClient: llmClient,
+      projectRoot,
+      dynamicCommands: this.dynamicCommands
+    });
+
     const agentRuntime = new AgentRuntime({
       modelRouter,
       toolRegistry,
@@ -220,51 +280,60 @@ class Application {
       repl,
       logger,
       episodicMemory,
-      checkpointManager
+      checkpointManager,
+      decisionEngine
     });
-
-    const dispatcher = new CommandDispatcher(llmClient, projectRoot, this.dynamicCommands);
 
     console.log('\n===============================================================');
     console.log(`   Agente CLI V3 Listo. Usa "/help" para comandos o "/paste".`);
     console.log('===============================================================\n');
 
-    // 4. Inicialización de reglas en chats nuevos (exclusivo para Playwright)
     if (providerType === 'PLAYWRIGHT' && (isNewChat || targetUrl === 'https://gemini.google.com/app')) {
       console.log('  [SISTEMA] Inicializando nuevo chat con reglas globales...');
       const response = await modelRouter.generate({ prompt: SYSTEM_PROMPTS.INIT_NEW_CHAT });
       console.log('\n-------------------- IA --------------------');
       console.log(response.text);
       console.log('--------------------------------------------\n');
-    }
 
-    process.on('unhandledRejection', (reason) => {
-      if (reason && (reason.code === 'ABORT_ERR' || reason.name === 'AbortError')) return;
-      if (reason && reason.message && reason.message.includes('closed')) return;
-      console.error('\n  [!] Error no controlado:', reason?.message || reason);
-    });
-
-    this.setupSigintHandler(repl, llmClient);
-
-    // Comprobación de ejecuciones pendientes al arrancar la CLI
-    const pendingState = checkpointManager.getPendingRun();
-    if (pendingState) {
-      console.log('\n  ⚠️ [SISTEMA] Se detectó una tarea anterior pendiente o interrumpida:');
-      console.log(`     - Run ID: ${pendingState.runId}`);
-      console.log(`     - Objetivo: "${pendingState.objective}"`);
-      console.log(`     - Estado: ${pendingState.status} (Paso ${pendingState.currentStep})\n`);
-
-      const resumeChoice = await repl.askQuestion('  ¿Deseas reanudar esta tarea? (Y/n): ');
-      if (resumeChoice.trim().toLowerCase() !== 'n') {
-        logger.currentExecutionId = pendingState.runId;
-        await agentRuntime.runLoop(pendingState.objective, null, pendingState);
-      } else {
-        checkpointManager.markRunCompleted(pendingState.runId, 'CANCELLED');
-        console.log('  [SISTEMA] Tarea anterior descartada.\n');
+      if (chatName && llmClient.page) {
+        const newUrl = cleanUrlString(llmClient.page.url());
+        if (newUrl.includes('/app/')) {
+          const chatsFile = paths.SAVED_CHATS_FILE;
+          let savedChats = {};
+          if (fs.existsSync(chatsFile)) {
+            try { savedChats = JSON.parse(fs.readFileSync(chatsFile, 'utf-8')); } catch (e) { }
+          }
+          savedChats[chatName] = newUrl;
+          fs.writeFileSync(chatsFile, JSON.stringify(savedChats, null, 2), 'utf-8');
+          console.log(`  ✅ [SISTEMA] Chat guardado automáticamente como "${chatName}".\n`);
+        }
       }
     }
 
-    // Bucle Principal de la Consola REPL
+    if (!isNewChat) {
+      const pendingState = checkpointManager.getPendingRun();
+      if (pendingState) {
+        console.log('\n  ⚠️ [SISTEMA] Se detectó una tarea anterior pendiente o interrumpida:');
+        console.log(`     - Run ID: ${pendingState.runId}`);
+        console.log(`     - Objetivo: "${pendingState.objective}"`);
+        console.log(`     - Estado: ${pendingState.status} (Paso ${pendingState.currentStep})\n`);
+
+        const resumeChoice = await repl.askQuestion('  ¿Deseas reanudar esta tarea? (Y/n): ');
+        if (resumeChoice.trim().toLowerCase() !== 'n') {
+          logger.currentExecutionId = pendingState.runId;
+          await agentRuntime.runLoop(pendingState.objective, null, pendingState);
+        } else {
+          checkpointManager.markRunCompleted(pendingState.runId, 'CANCELLED');
+          console.log('  [SISTEMA] Tarea anterior descartada.\n');
+        }
+      }
+    } else {
+      const pendingState = checkpointManager.getPendingRun();
+      if (pendingState) {
+        checkpointManager.markRunCompleted(pendingState.runId, 'CANCELLED');
+      }
+    }
+
     while (true) {
       global.abortLoop = false;
       let instruction = await repl.askQuestion('\nGemini Dev V3 > ');
@@ -273,17 +342,19 @@ class Application {
         instruction = await repl.askMultiline();
       }
 
-      const dispatchResult = await dispatcher.dispatch(instruction, repl);
-      if (dispatchResult.newRoot) {
-        projectRoot = dispatchResult.newRoot;
+      const decision = await decisionEngine.processInput(instruction, repl);
+
+      if (decision.newRoot) {
+        projectRoot = decision.newRoot;
         agentRuntime.setProjectRoot(projectRoot);
+        decisionEngine.setProjectRoot(projectRoot);
       }
 
-      if (dispatchResult.skip) continue;
+      if (decision.skip) continue;
 
       logger.startExecution();
 
-      await agentRuntime.runLoop(dispatchResult.finalPrompt);
+      await agentRuntime.runLoop(decision.cleanPrompt, null, null, decision.mode);
     }
   }
 }
