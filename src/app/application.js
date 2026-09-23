@@ -261,7 +261,26 @@ class Application {
 
     await llmClient.connect(targetUrl);
 
+    if (typeof llmClient.setupWebUIListener === 'function') {
+      await llmClient.setupWebUIListener(async (webInput) => {
+        if (global.isProcessing) {
+          return;
+        }
+
+        console.log(`\n  🌐 [WEB UI DETECTADO] Instrucción manual ingresada en el navegador: "${webInput}"`);
+        const decision = await decisionEngine.processInput(webInput, repl);
+
+        if (decision.skip) return;
+
+        logger.startExecution();
+        await agentRuntime.runLoop(decision.cleanPrompt, null, null, decision.mode, { isWebInitiated: true });
+
+        process.stdout.write('\nGemini Dev V3 > ');
+      });
+    }
+
     const modelRouter = new ModelRouter(llmClient);
+
     const toolRegistry = new ToolRegistry();
     const dbConnection = new MemoryDatabase();
     const checkpointManager = new CheckpointManager(dbConnection);
