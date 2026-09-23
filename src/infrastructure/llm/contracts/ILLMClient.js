@@ -23,6 +23,10 @@ class ILLMClient {
     return 'El proveedor actual no soporta la extracción de historial visual.';
   }
 
+  async setupWebUIListener(callback) {
+    // Método opcional para clientes con interfaz Web UI
+  }
+
   async close() {
     throw new Error("El método 'close()' debe ser implementado.");
   }

@@ -245,7 +245,7 @@ class GeminiPlaywrightClient extends ILLMClient {
     const inputSelector = 'div[contenteditable="true"]';
     const inputBox = this.page.locator(inputSelector).first();
     await inputBox.waitFor({ state: 'visible' });
-    let finalPrompt = prompt;
+    let finalPrompt = prompt ? String(prompt) : '';
 
     if (filePath && fs.existsSync(filePath)) {
       console.log('📄 Adjuntando archivo de contexto...');
