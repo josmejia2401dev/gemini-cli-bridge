@@ -1,8 +1,7 @@
-const fs = require('fs');
-const path = require('path');
 const { createContextFile, createPartialContextFile } = require('../../shared/utils/fileScanner');
 const paths = require('../../shared/config/paths');
 const SYSTEM_PROMPTS = require('../../shared/config/prompts');
+const FileSystemUtils = require('../../shared/utils/fileSystemUtils');
 
 /**
  * ExecutionDecisionEngine (Unificado)
@@ -174,7 +173,7 @@ class ExecutionDecisionEngine {
     if (lowerInput.startsWith('/upload-files')) {
       return await this.handleUploadFiles(trimmed);
     }
-    
+
     if (lowerInput.startsWith('/sync ')) {
       await this.handleSyncPartial(trimmed);
       return { mode: 'SYSTEM', skip: true };
@@ -254,13 +253,16 @@ class ExecutionDecisionEngine {
   }
 
   getSavedChats() {
-    if (!fs.existsSync(this.chatsFile)) return {};
-    try { return JSON.parse(fs.readFileSync(this.chatsFile, 'utf-8')); }
-    catch (e) { return {}; }
+    if (!FileSystemUtils.fileExists(this.chatsFile)) return {};
+    try {
+      return JSON.parse(FileSystemUtils.readFile(this.chatsFile));
+    } catch (e) {
+      return {};
+    }
   }
 
   saveChats(chats) {
-    fs.writeFileSync(this.chatsFile, JSON.stringify(chats, null, 2), 'utf-8');
+    FileSystemUtils.writeFile(this.chatsFile, JSON.stringify(chats, null, 2));
   }
 
   async handleChatNew() {
@@ -272,8 +274,8 @@ class ExecutionDecisionEngine {
       await this.gemini.connect('https://gemini.google.com/app');
     }
 
-    if (fs.existsSync(this.chatsFile) && fs.existsSync(paths.CHAT_URL_FILE)) {
-      try { fs.unlinkSync(paths.CHAT_URL_FILE); } catch (e) { }
+    if (FileSystemUtils.fileExists(this.chatsFile)) {
+      FileSystemUtils.removeIfExists(paths.CHAT_URL_FILE);
     }
     console.log('  ✅ Chat nuevo listo.');
   }
@@ -321,7 +323,7 @@ class ExecutionDecisionEngine {
       await this.gemini.connect(targetUrl);
     }
 
-    fs.writeFileSync(paths.CHAT_URL_FILE, targetUrl, 'utf-8');
+    FileSystemUtils.writeFile(paths.CHAT_URL_FILE, targetUrl);
     console.log(`  ✅ Chat "${name}" cargado y listo.`);
   }
 
@@ -375,8 +377,8 @@ class ExecutionDecisionEngine {
     console.log('\n  Extrayendo historial...');
     if (!this.gemini) return;
     const historyText = await this.gemini.getChatHistory();
-    const historyPath = path.join(this.projectRoot, 'HISTORIAL_CHAT.md');
-    fs.writeFileSync(historyPath, historyText, 'utf-8');
+    const historyPath = FileSystemUtils.resolveSafePath(this.projectRoot, 'HISTORIAL_CHAT.md');
+    FileSystemUtils.writeFile(historyPath, historyText);
     console.log(`  Historial guardado en: ${historyPath}\n`);
   }
 
@@ -387,14 +389,14 @@ class ExecutionDecisionEngine {
       return { mode: 'SYSTEM', skip: true };
     }
 
-    const absPath = path.resolve(targetPath);
-    if (!fs.existsSync(absPath)) {
+    const absPath = FileSystemUtils.resolveSafePath(process.cwd(), targetPath);
+    if (!FileSystemUtils.fileExists(absPath)) {
       console.log(`    La ruta "${absPath}" no existe en disco.`);
       return { mode: 'SYSTEM', skip: true };
     }
 
     this.projectRoot = absPath;
-    fs.writeFileSync(paths.REPO_PATH_FILE, absPath, 'utf-8');
+    FileSystemUtils.writeFile(paths.REPO_PATH_FILE, absPath);
     console.log(`  [SISTEMA] Repositorio cambiado a: ${absPath}`);
 
     return { mode: 'SYSTEM', skip: true, newRoot: absPath };

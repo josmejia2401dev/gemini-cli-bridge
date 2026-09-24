@@ -12,26 +12,27 @@ class EpisodicMemory {
       INSERT INTO episodic_memory (command, error_output, user_feedback)
       VALUES (?, ?, ?)
     `);
-    stmt.run(command, errorOutput, userFeedback);
+    const info = stmt.run(command, errorOutput, userFeedback);
+    return info.lastInsertRowid;
   }
 
-  recordSolution(command, solutionApplied) {
+  recordSolution(failureId, solutionApplied) {
     const stmt = this.db.prepare(`
       UPDATE episodic_memory
       SET solution_applied = ?
-      WHERE command = ? AND solution_applied IS NULL
+      WHERE id = ?
     `);
-    stmt.run(solutionApplied, command);
+    stmt.run(solutionApplied, failureId);
   }
 
   findPastExperience(command) {
-  const stmt = this.db.prepare(`
+    const stmt = this.db.prepare(`
     SELECT * FROM episodic_memory 
     WHERE command LIKE ?
     ORDER BY created_at DESC LIMIT 3
   `);
-  return stmt.all(`%${command}%`);
-}
+    return stmt.all(`%${command}%`);
+  }
 
   /**
    * BÚSQUEDA DETERMINÍSTICA DE SOLUCIONES CONOCIDAS EN MEMORIA
@@ -43,7 +44,7 @@ class EpisodicMemory {
         AND (error_output LIKE ? OR command = ?)
       ORDER BY id DESC LIMIT 1
     `);
-    
+
     const row = stmt.get(`%${errorSignature}%`, command);
     return row ? row.solution_applied : null;
   }

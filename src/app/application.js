@@ -1,5 +1,4 @@
-const fs = require('fs');
-const path = require('path');
+const FileSystemUtils = require('../shared/utils/fileSystemUtils');
 
 const REPL = require('../interfaces/cli/repl');
 const LLMFactory = require('../infrastructure/llm/llmFactory');
@@ -25,7 +24,7 @@ class Application {
   constructor() {
     this.chatUrlFile = paths.CHAT_URL_FILE;
     this.repoPathFile = paths.REPO_PATH_FILE;
-    this.commandsFile = path.join(__dirname, '../../commands.json');
+    this.commandsFile = paths.COMMANDS_FILE || FileSystemUtils.resolveAbsolutePath('commands.json');
     this.sessionDir = paths.SESSION_DIR;
     this.dynamicCommands = this.loadDynamicCommands();
   }
@@ -33,17 +32,17 @@ class Application {
   displayBanner() {
     let pkg = { name: 'gemini-cli-bridge', version: '3.0.0', author: 'N/A' };
 
-    if (fs.existsSync(paths.PACKAGE_JSON_FILE)) {
+    if (FileSystemUtils.fileExists(paths.PACKAGE_JSON_FILE)) {
       try {
-        const parsed = JSON.parse(fs.readFileSync(paths.PACKAGE_JSON_FILE, 'utf-8'));
+        const parsed = JSON.parse(FileSystemUtils.readFile(paths.PACKAGE_JSON_FILE));
         pkg.name = parsed.name || pkg.name;
         pkg.version = parsed.version || pkg.version;
         pkg.author = typeof parsed.author === 'object' ? (parsed.author.name || 'N/A') : (parsed.author || 'N/A');
       } catch (e) { }
     }
 
-    if (fs.existsSync(paths.BANNER_FILE)) {
-      const bannerText = fs.readFileSync(paths.BANNER_FILE, 'utf-8');
+    if (FileSystemUtils.fileExists(paths.BANNER_FILE)) {
+      const bannerText = FileSystemUtils.readFile(paths.BANNER_FILE);
       console.log(`\n${bannerText}`);
     } else {
       console.log('\n  GEMINI CLI BRIDGE');
@@ -57,9 +56,9 @@ class Application {
   }
 
   loadDynamicCommands() {
-    if (fs.existsSync(this.commandsFile)) {
+    if (FileSystemUtils.fileExists(this.commandsFile)) {
       try {
-        return JSON.parse(fs.readFileSync(this.commandsFile, 'utf-8'));
+        return JSON.parse(FileSystemUtils.readFile(this.commandsFile));
       } catch (e) {
         console.error('  Error al leer commands.json.');
       }
@@ -70,12 +69,13 @@ class Application {
   async resolveProjectRoot(repl, forceAsk = false) {
     let projectRoot = forceAsk ? null : process.argv[2];
 
-    if (!forceAsk && !projectRoot && fs.existsSync(this.repoPathFile)) {
-      const savedPath = fs.readFileSync(this.repoPathFile, 'utf-8').trim();
-      if (fs.existsSync(path.resolve(savedPath))) projectRoot = savedPath;
+    if (!forceAsk && !projectRoot && FileSystemUtils.fileExists(this.repoPathFile)) {
+      const savedPath = FileSystemUtils.readFile(this.repoPathFile).trim();
+      const resolvedSaved = FileSystemUtils.resolveAbsolutePath(savedPath);
+      if (FileSystemUtils.fileExists(resolvedSaved)) projectRoot = resolvedSaved;
     }
 
-    while (!projectRoot || !fs.existsSync(path.resolve(projectRoot))) {
+    while (!projectRoot || !FileSystemUtils.fileExists(FileSystemUtils.resolveAbsolutePath(projectRoot))) {
       if (repl.rl.closed) process.exit(0);
       if (projectRoot) console.log(`  La ruta "${projectRoot}" es inválida.`);
       const inputPath = await repl.askQuestion('  Ingresa la ruta del repositorio para este chat (Enter para usar actual "."): ');
@@ -83,8 +83,8 @@ class Application {
       projectRoot = inputPath.trim() || '.';
     }
 
-    projectRoot = path.resolve(projectRoot);
-    fs.writeFileSync(this.repoPathFile, projectRoot, 'utf-8');
+    projectRoot = FileSystemUtils.resolveAbsolutePath(projectRoot);
+    FileSystemUtils.writeFile(this.repoPathFile, projectRoot);
     console.log(`  Repositorio vinculado: ${projectRoot}\n`);
     return projectRoot;
   }
@@ -116,16 +116,16 @@ class Application {
 
       const chatsFile = paths.SAVED_CHATS_FILE;
       let savedChats = {};
-      if (fs.existsSync(chatsFile)) {
-        try { savedChats = JSON.parse(fs.readFileSync(chatsFile, 'utf-8')); }
+      if (FileSystemUtils.fileExists(chatsFile)) {
+        try { savedChats = JSON.parse(FileSystemUtils.readFile(chatsFile)); }
         catch (e) { console.error('  Error al leer los chats guardados.'); }
       }
       const chatNames = Object.keys(savedChats);
 
       let savedUrl = '';
       let hasActiveChat = false;
-      if (fs.existsSync(this.chatUrlFile)) {
-        savedUrl = cleanUrlString(fs.readFileSync(this.chatUrlFile, 'utf-8'));
+      if (FileSystemUtils.fileExists(this.chatUrlFile)) {
+        savedUrl = cleanUrlString(FileSystemUtils.readFile(this.chatUrlFile));
         hasActiveChat = savedUrl.includes('/app/');
       }
 
@@ -179,7 +179,7 @@ class Application {
         if (selectedIndex >= 0 && selectedIndex < chatNames.length) {
           const selectedName = chatNames[selectedIndex];
           const targetUrl = cleanUrlString(savedChats[selectedName]);
-          fs.writeFileSync(this.chatUrlFile, targetUrl, 'utf-8');
+          FileSystemUtils.writeFile(this.chatUrlFile, targetUrl);
           console.log(`\n  [SISTEMA] Se cargará el chat: "${selectedName}"`);
           return { targetUrl, isNewChat: false, chatName: selectedName };
         } else {
@@ -205,6 +205,7 @@ class Application {
       if (global.isProcessing && llmClient) {
         console.log('\n  🛑 [SISTEMA] Interrumpiendo IA. Deteniendo generación...');
         global.abortLoop = true;
+        global.isProcessing = false;
         await llmClient.stopGeneration();
       } else {
         sigintCount++;
@@ -319,11 +320,11 @@ class Application {
         if (newUrl.includes('/app/')) {
           const chatsFile = paths.SAVED_CHATS_FILE;
           let savedChats = {};
-          if (fs.existsSync(chatsFile)) {
-            try { savedChats = JSON.parse(fs.readFileSync(chatsFile, 'utf-8')); } catch (e) { }
+          if (FileSystemUtils.fileExists(chatsFile)) {
+            try { savedChats = JSON.parse(FileSystemUtils.readFile(chatsFile)); } catch (e) { }
           }
           savedChats[chatName] = newUrl;
-          fs.writeFileSync(chatsFile, JSON.stringify(savedChats, null, 2), 'utf-8');
+          FileSystemUtils.writeFile(chatsFile, JSON.stringify(savedChats, null, 2));
           console.log(`  ✅ [SISTEMA] Chat guardado automáticamente como "${chatName}".\n`);
         }
       }

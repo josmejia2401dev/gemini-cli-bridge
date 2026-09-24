@@ -1,13 +1,7 @@
 const { z } = require('zod');
 
 const executeCommandSchema = z.object({
-  command: z.string().min(1, 'El comando no puede estar vacío.'),
-  cwd: z.string().optional()
-});
-
-const writeFileSchema = z.object({
-  filePath: z.string().min(1, 'La ruta del archivo es obligatoria.'),
-  content: z.string()
+  command: z.string().min(1, 'El comando no puede estar vacío.')
 });
 
 const readFilesSchema = z.object({
@@ -44,22 +38,20 @@ const taskPlanSchema = z.object({
   ).min(1, 'El plan debe contener al menos una tarea.')
 });
 
-// ESQUEMA TOLERANTE PARA task_complete
 const taskCompleteSchema = z.object({
-  status: z.any().optional().default('SUCCESS').transform(val => {
+  status: z.union([z.string(), z.boolean()]).optional().default('SUCCESS').transform(val => {
     if (!val) return 'SUCCESS';
     const str = String(val).toUpperCase();
-    if (str.includes('FAIL') || str.includes('ERROR') || str.includes('REJECT')) return 'FAILED';
+    if (str.includes('FAIL') || str.includes('ERROR') || str.includes('REJECT') || val === false) return 'FAILED';
     return 'SUCCESS';
   }),
-  summary: z.any().optional().transform(val => val ? String(val) : 'Subtarea completada exitosamente.'),
-  reason: z.any().optional().transform(val => val ? String(val) : ''),
-  task_id: z.any().optional()
+  summary: z.string().optional().default('Subtarea completada exitosamente.'),
+  reason: z.string().optional().default(''),
+  task_id: z.string().optional()
 });
 
 module.exports = {
   executeCommandSchema,
-  writeFileSchema,
   readFilesSchema,
   searchCodeSchema,
   whoImportsSchema,

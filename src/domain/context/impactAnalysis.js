@@ -1,4 +1,4 @@
-const path = require('path');
+const FileSystemUtils = require('../../shared/utils/fileSystemUtils');
 const RepositoryIntelligence = require('./repositoryIntel');
 const SYSTEM_PROMPTS = require('../../shared/config/prompts');
 
@@ -9,11 +9,10 @@ class ImpactAnalysis {
   }
 
   analyze(targetFile) {
-    const ext = path.extname(targetFile);
-    const baseName = path.basename(targetFile, ext);
+    const baseName = FileSystemUtils.getFileNameWithoutExt(targetFile);
 
     const importersResult = this.intel.whoImports(baseName);
-    
+
     const affectedModules = [];
     const associatedTests = [];
 

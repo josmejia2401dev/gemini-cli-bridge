@@ -1,4 +1,4 @@
-const path = require('path');
+const FileSystemUtils = require("../../shared/utils/fileSystemUtils");
 
 /**
  * Validador Pre y Post ejecución para prevenir alucinaciones sintácticas,
@@ -23,17 +23,28 @@ class Verifier {
     return { valid: true };
   }
 
-  static isSafePath(targetPath, projectRoot) {
-    const resolvedTarget = path.resolve(projectRoot, targetPath);
-    const resolvedRoot = path.resolve(projectRoot);
-    return resolvedTarget.startsWith(resolvedRoot);
-  }
-
   static postExecute(output, stderr) {
     if (stderr && stderr.trim().length > 0 && !output) {
       return { success: false, error: stderr };
     }
     return { success: true };
+  }
+
+  static verifyModifiedFiles(projectRoot, filesModified) {
+    const missing = [];
+    for (const relPath of filesModified) {
+      const content = FileSystemUtils.safeReadFile(projectRoot, relPath);
+      if (content === null) {
+        missing.push(relPath);
+      }
+    }
+    if (missing.length > 0) {
+      return {
+        valid: false,
+        reason: `Los siguientes archivos marcados como modificados no existen en disco: ${missing.join(', ')}`
+      };
+    }
+    return { valid: true };
   }
 }
 

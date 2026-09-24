@@ -1,28 +1,33 @@
-const { taskCompleteSchema } = require('../../shared/schemas/toolSchemas');
 const {
   executeCommandSchema,
-  writeFileSchema,
   readFilesSchema,
   searchCodeSchema,
   whoImportsSchema,
   getDependenciesSchema,
   findSymbolSchema,
-  analyzeImpactSchema
+  analyzeImpactSchema,
+  taskCompleteSchema
 } = require('../../shared/schemas/toolSchemas');
 const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const AtomicWriter = require('./atomicWriter');
 const PolicyEngine = require('./policyEngine');
 const RepositoryIndexer = require('../../domain/context/indexer');
 const RepositoryIntelligence = require('../../domain/context/repositoryIntel');
 const ImpactAnalysis = require('../../domain/context/impactAnalysis');
+const FileSystemUtils = require('../../shared/utils/fileSystemUtils');
 
 class ToolRegistry {
   constructor() {
     this.tools = new Map();
+    this.intelCache = new Map();
     this.policyEngine = new PolicyEngine();
     this.registerDefaultTools();
+  }
+
+  getSharedIntel(projectRoot) {
+    if (!this.intelCache.has(projectRoot)) {
+      this.intelCache.set(projectRoot, new RepositoryIntelligence(projectRoot));
+    }
+    return this.intelCache.get(projectRoot);
   }
 
   registerDefaultTools() {
@@ -36,7 +41,6 @@ class ToolRegistry {
           const output = execSync(args.command, { cwd: context.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
           return { output };
         } catch (err) {
-          // 🛠️ CAPTURA AGRESIVA DE LOGS DE TERMINAL
           let fullError = err.message;
           if (err.stdout && err.stdout.toString().trim()) {
             fullError += `\n[STDOUT]:\n${err.stdout.toString().trim()}`;
@@ -50,16 +54,6 @@ class ToolRegistry {
     });
 
     this.registerTool({
-      name: 'write_file',
-      description: 'Escribe el contenido completo de un archivo mediante escritura atómica e inspección de sintaxis',
-      riskLevel: 'MEDIUM',
-      schema: writeFileSchema,
-      execute: async (args, context) => {
-        return AtomicWriter.writeFile(context.projectRoot, args.filePath, args.content);
-      }
-    });
-
-    this.registerTool({
       name: 'read_files',
       description: 'Lee uno o varios archivos del proyecto',
       riskLevel: 'LOW',
@@ -67,9 +61,9 @@ class ToolRegistry {
       execute: async (args, context) => {
         const results = {};
         for (const relPath of args.paths) {
-          const absPath = path.resolve(context.projectRoot, relPath);
-          if (fs.existsSync(absPath)) {
-            results[relPath] = fs.readFileSync(absPath, 'utf-8');
+          const content = FileSystemUtils.safeReadFile(context.projectRoot, relPath);
+          if (content !== null) {
+            results[relPath] = content;
           }
         }
         return results;
@@ -95,7 +89,7 @@ class ToolRegistry {
       riskLevel: 'LOW',
       schema: whoImportsSchema,
       execute: async (args, context) => {
-        const intel = new RepositoryIntelligence(context.projectRoot);
+        const intel = this.getSharedIntel(context.projectRoot);
         return intel.whoImports(args.target);
       }
     });
@@ -106,7 +100,7 @@ class ToolRegistry {
       riskLevel: 'LOW',
       schema: getDependenciesSchema,
       execute: async (args, context) => {
-        const intel = new RepositoryIntelligence(context.projectRoot);
+        const intel = this.getSharedIntel(context.projectRoot);
         return intel.getDependencies(args.filePath);
       }
     });
@@ -117,7 +111,7 @@ class ToolRegistry {
       riskLevel: 'LOW',
       schema: findSymbolSchema,
       execute: async (args, context) => {
-        const intel = new RepositoryIntelligence(context.projectRoot);
+        const intel = this.getSharedIntel(context.projectRoot);
         return intel.findSymbolDefinition(args.symbol);
       }
     });

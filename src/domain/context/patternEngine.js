@@ -1,43 +1,61 @@
-const path = require('path');
+const FileSystemUtils = require('../../shared/utils/fileSystemUtils');
 
 /**
- * Motor de patrones para filtrado fino de archivos, exclusiones de seguridad,
- * ignorado de binarios y análisis de sintaxis de extensión.
+ * Motor de patrones único para filtrado de archivos, directorios e ignorados.
  */
 class PatternEngine {
   constructor() {
     this.ignoredDirs = new Set([
-      'node_modules', '.git', 'dist', 'build', '.session', '.lancedb', 'coverage'
+      '.git', '.idea', '.vscode', '.svn', '.hg',
+      'node_modules', 'vendor', '.venv', 'venv', 'env',
+      'target', 'build', 'dist', 'out', '.next', '.nuxt', '.angular',
+      '.svelte-kit', '.astro', '.turbo', '.output', '.cache', 'coverage',
+      '.session', 'temp', 'tmp', '.gradle'
     ]);
-    this.sensitivePatterns = [
-      /\.env.*/i,
-      /.*secret.*/i,
-      /.*key.*/i,
-      /id_rsa/i
+
+    this.ignoreFiles = new Set([
+      'contexto_temp.txt',
+      '.contexto_temp.txt',
+      'historial_chat.md',
+      '.session_chat_url.txt',
+      '.session_repo_path.txt'
+    ]);
+
+    this.validPatterns = [
+      '*.md', '*.markdown', '*.mdx',
+      '*.js', '*.mjs', '*.cjs', '*.ts', '*.mts', '*.cts',
+      '*.jsx', '*.tsx', '*.vue', '*.svelte', '*.astro',
+      '*.css', '*.scss', '*.sass', '*.less', '*.pcss', '*.styl',
+      '*.html', '*.htm', '*.svg',
+      '*.json', '*.jsonc', '*.json5', '*.xml', '*.yml', '*.yaml', '*.toml', '*.properties',
+      '*.env*', '*.graphql', '*.gql', '*.sql',
+      '*.sh', '*.bash', '*.bat', '*.ps1',
+      '*.py', '*.java', '*.kt', '*.kts', '*.groovy', '*.gradle',
+      '*.go', '*.rs', '*.php', '*.cs',
+      'Dockerfile*', 'Jenkinsfile*', 'Makefile*',
+      'pom.xml', 'build.gradle', 'package.json', '*.lock*',
+      '.gitignore', '.npmignore', '.dockerignore', '.editorconfig', '.prettierrc*', '.eslintrc*'
     ];
-    this.binaryExtensions = new Set([
-      '.png', '.jpg', '.jpeg', '.gif', '.ico', '.pdf', '.zip', '.exe', '.dll', '.so', '.tar', '.gz'
-    ]);
+
+    this.compiledRegexes = this.validPatterns.map(p => this.parsePatternToRegex(p));
+  }
+
+  parsePatternToRegex(pattern) {
+    if (pattern instanceof RegExp) return pattern;
+    const escaped = pattern
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '.*');
+    return new RegExp(`^${escaped}$`, 'i');
   }
 
   isDirIgnored(dirName) {
-    return this.ignoredDirs.has(dirName);
-  }
-
-  isBinary(filePath) {
-    const ext = path.extname(filePath).toLowerCase();
-    return this.binaryExtensions.has(ext);
-  }
-
-  isSensitive(filePath) {
-    const baseName = path.basename(filePath);
-    return this.sensitivePatterns.some(pattern => pattern.test(baseName));
+    return this.ignoredDirs.has(dirName.toLowerCase());
   }
 
   shouldProcessFile(filePath) {
-    if (this.isBinary(filePath)) return false;
-    if (this.isSensitive(filePath)) return false;
-    return true;
+    const fileName = FileSystemUtils.getFileName(filePath);
+    if (this.ignoreFiles.has(fileName)) return false;
+    return this.compiledRegexes.some(regex => regex.test(fileName));
   }
 }
 

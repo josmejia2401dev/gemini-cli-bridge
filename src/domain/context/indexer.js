@@ -1,5 +1,4 @@
-const fs = require('fs');
-const path = require('path');
+const FileSystemUtils = require('../../shared/utils/fileSystemUtils');
 const PatternEngine = require('./patternEngine');
 
 /**
@@ -15,19 +14,18 @@ class RepositoryIndexer {
   }
 
   buildIndex(dir = this.projectRoot) {
-    if (!fs.existsSync(dir)) return this.fileIndex;
+    if (!FileSystemUtils.fileExists(dir)) return this.fileIndex;
 
-    const items = fs.readdirSync(dir, { withFileTypes: true });
+    const items = FileSystemUtils.readDir(dir);
     for (const item of items) {
-      const fullPath = path.join(dir, item.name);
-      const relPath = path.relative(this.projectRoot, fullPath).replace(/\\/g, '/');
+      const relPath = FileSystemUtils.getRelativePath(this.projectRoot, item.fullPath);
 
-      if (item.isDirectory()) {
+      if (item.isDirectory) {
         if (!this.patternEngine.isDirIgnored(item.name)) {
-          this.buildIndex(fullPath);
+          this.buildIndex(item.fullPath);
         }
-      } else if (this.patternEngine.shouldProcessFile(fullPath)) {
-        this.analyzeFile(relPath, fullPath);
+      } else if (this.patternEngine.shouldProcessFile(item.fullPath)) {
+        this.analyzeFile(relPath, item.fullPath);
       }
     }
     return this.fileIndex;
@@ -35,11 +33,13 @@ class RepositoryIndexer {
 
   analyzeFile(relPath, fullPath) {
     try {
-      const content = fs.readFileSync(fullPath, 'utf-8');
+      const content = FileSystemUtils.readFile(fullPath);
+      if (content === null) return;
+
       const symbols = new Set();
       const imports = new Set();
       const exports = new Set();
-      const ext = path.extname(fullPath).toLowerCase();
+      const ext = FileSystemUtils.getFileExtension(fullPath);
       let language = 'other';
 
       // ENRUTAMIENTO POR LENGUAJE CON ESTRUCTURA NORMALIZADA

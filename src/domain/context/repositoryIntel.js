@@ -31,7 +31,9 @@ class RepositoryIntelligence {
     for (const [filePath, data] of this.indexer.fileIndex.entries()) {
       const match = data.imports.some(imp => {
         const normalizedImp = imp.toLowerCase().replace(/\\/g, '/');
-        return normalizedImp.includes(normalizedTarget) || normalizedImp.endsWith(normalizedTarget);
+        const segments = normalizedImp.split('/');
+        const lastSegment = segments[segments.length - 1].replace(/\.(js|ts|jsx|tsx|java)$/i, '');
+        return lastSegment === normalizedTarget || normalizedImp.endsWith(`/${normalizedTarget}`);
       });
 
       if (match) {

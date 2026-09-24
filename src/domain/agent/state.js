@@ -1,5 +1,14 @@
 const TaskDAG = require('./dag');
 
+const VALID_TRANSITIONS = {
+  IDLE: ['PLANNING', 'EXECUTING', 'SUCCESS'],
+  PLANNING: ['EXECUTING', 'REPLAN', 'IDLE'],
+  EXECUTING: ['VERIFYING', 'REPLAN', 'SUCCESS', 'IDLE'],
+  VERIFYING: ['EXECUTING', 'SUCCESS', 'REPLAN', 'IDLE'],
+  REPLAN: ['PLANNING', 'EXECUTING', 'IDLE'],
+  SUCCESS: ['IDLE', 'PLANNING']
+};
+
 class AgentState {
   constructor({
     runId = null,
@@ -12,7 +21,6 @@ class AgentState {
     filesModified = [],
     toolCalls = [],
     errors = [],
-    iterations = 0,
     dag = []
   } = {}) {
     this.runId = runId;
@@ -25,11 +33,15 @@ class AgentState {
     this.filesModified = Array.from(new Set(filesModified));
     this.toolCalls = toolCalls;
     this.errors = errors;
-    this.iterations = iterations;
     this.dag = dag instanceof TaskDAG ? dag : TaskDAG.fromJSON(dag);
   }
 
   transition(newStatus) {
+    const allowed = VALID_TRANSITIONS[this.status];
+    if (allowed && !allowed.includes(newStatus)) {
+      console.warn(`  ⚠️ [AGENT_STATE] Transición de estado rechazada: '${this.status}' -> '${newStatus}'`);
+      return;
+    }
     this.status = newStatus;
   }
 
@@ -70,11 +82,11 @@ class AgentState {
       currentStep: this.currentStep,
       completedSteps: this.completedSteps,
       failedSteps: this.failedSteps,
+      skippedTasks: this.skippedTasks,
       filesRead: this.filesRead,
       filesModified: this.filesModified,
       toolCalls: this.toolCalls,
       errors: this.errors,
-      iterations: this.iterations,
       dag: this.dag.toJSON()
     };
   }
