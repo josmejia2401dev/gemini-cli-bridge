@@ -247,7 +247,7 @@ REGLAS DE PLANIFICACIÓN:
 5. Respeta las dependencias reales entre tareas.
 6. Evita tareas redundantes o puramente conversacionales.
 7. Incluye validaciones cuando sean necesarias para demostrar que una modificación funciona.
-8. Si una modificación puede afectar contratos o dependencias existentes, refleja ese impacto en el DAG.
+8. Si una modificación requiere actualizar contratos o consumidores conocidos, incluye esas actualizaciones en el DAG.
 9. No conviertas una tarea simple en una cadena innecesariamente compleja de subtareas.
 10. El DAG debe representar una estrategia ejecutable, no una explicación teórica del problema.
 11. Responde ÚNICAMENTE con el objeto JavaScript "task_plan" sin comentarios conversacionales alrededor.`;
@@ -291,21 +291,6 @@ Descarta la ruta fallida y responde ÚNICAMENTE con un objeto "task_plan" format
   }
 }`,
 
-  IMPACT_NOTICE: (targetFile, affectedModules, associatedTests) => `[SISTEMA: ANÁLISIS PREDICTIVO DE IMPACTO DETERMINÍSTICO]
-Atención Agente: El archivo objetivo "${targetFile}" es consumido por los siguientes archivos en tu entorno local:
-
-- Módulos dependientes: ${affectedModules.join(', ') || 'Ninguno'}
-- Pruebas asociadas: ${associatedTests.join(', ') || 'Ninguno'}
-
-INTERPRETACIÓN ARQUITECTÓNICA:
-Estos elementos representan posibles consumidores o validadores del contrato expuesto por "${targetFile}".
-
-INSTRUCCIÓN:
-Antes de finalizar la modificación, valida si tus cambios alteran firmas, clases, métodos, interfaces, tipos, contratos, comportamiento o datos utilizados por estos componentes.
-
-Si existe impacto real, incluye la actualización necesaria en cascada para mantener la coherencia arquitectónica.
-
-No modifiques archivos dependientes únicamente porque aparecen en esta lista; determina primero si el contrato que consumen realmente fue afectado.`,
 
   REFLECTOR_FEEDBACK: (command, userReason) => `[SISTEMA: El usuario denegó la ejecución del comando local '${command}'. Motivo: "${userReason}". Reajusta tu estrategia como agente sin repetir este comando.
 
@@ -387,7 +372,7 @@ IMPORTANTE: los archivos recibidos en esta actualización parcial deben consider
 
 No mezcles ni combines automáticamente el contenido anterior con el nuevo. Conserva únicamente la versión actualizada como referencia válida, salvo que explícitamente te indique que debo recuperar o conservar alguna parte de la versión anterior.
 
-Al incorporar estos archivos, analiza también su impacto sobre la arquitectura existente: dependencias, contratos, interfaces, tipos, servicios, módulos, flujos de datos, responsabilidades y cualquier otro componente que pueda verse afectado.
+Al incorporar estos archivos, conserva la coherencia con los contratos, interfaces, tipos, servicios, módulos, flujos de datos y responsabilidades ya conocidas.
 
 No interpretes esta actualización parcial como un reemplazo completo del proyecto. El resto de los archivos y la arquitectura previamente establecida permanecen vigentes, excepto aquellos archivos concretos que estén siendo actualizados mediante este envío.
 
@@ -400,16 +385,16 @@ Regla de precedencia:
 - Si existe una contradicción entre una versión anterior y la nueva versión de un archivo, siempre prevalece la versión nueva.
 
 IMPORTANTE SOBRE ARQUITECTURA:
-Una actualización parcial puede modificar un contrato que tenga consumidores fuera de los archivos enviados. No asumas que el impacto está limitado físicamente a los archivos recibidos. Evalúa las relaciones conocidas del proyecto y conserva la coherencia del sistema.
+Una actualización parcial puede modificar un contrato utilizado fuera de los archivos enviados. No asumas que el cambio queda limitado físicamente a los archivos recibidos; conserva la coherencia con la información disponible.
 
 No inventes cambios en archivos no enviados. Si no existe evidencia de que deban modificarse, mantenlos intactos.
 
 Por favor confirma brevemente la recepción y que has incorporado correctamente estos archivos como las versiones vigentes dentro del contexto arquitectónico del proyecto.`,
 
-  SUBTASK_ACTIVE: (activeTaskId, description, objective, impactNotice) =>
+  SUBTASK_ACTIVE: (activeTaskId = '', description = '', objective = '') =>
     `[SUBTAREA ACTIVA: ${activeTaskId}]
 Descripción: ${description}
-Objetivo Global: "${objective}"${impactNotice}
+Objetivo Global: "${objective}"
 
 Actúa como un arquitecto de software ejecutando una operación concreta dentro de una arquitectura existente.
 
@@ -457,7 +442,7 @@ REGLAS STRICTAS:
 - Usa SIEMPRE la propiedad 'filePath'.
 - No emitas explicaciones conversacionales junto al objeto de herramienta.
 - No marques la subtarea como completada mientras exista una operación necesaria pendiente.
-- No modifiques contratos o componentes relacionados sin una razón técnica derivada del objetivo o del impacto real del cambio.
+- No modifiques contratos o componentes relacionados sin una razón técnica derivada del objetivo o de una dependencia conocida.
 - Mantén la implementación coherente con la arquitectura vigente.`,
 
   SUBTASK_EPISODIC_MEMORY: (pastExperiences) => {

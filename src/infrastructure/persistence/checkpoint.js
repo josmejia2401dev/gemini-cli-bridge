@@ -1,11 +1,12 @@
 const AgentState = require('../../domain/agent/state');
 
 class CheckpointManager {
-  constructor(dbConnection) {
+  constructor({ dbConnection = null } = {}) {
+    if (!dbConnection) throw new Error('[CheckpointManager] dbConnection es obligatorio.');
     this.db = dbConnection.getDb();
   }
 
-  createRun(runId, objective) {
+  createRun(runId = '', objective = '') {
     const stmt = this.db.prepare(`
       INSERT INTO agent_runs (run_id, objective, status, updated_at)
       VALUES (?, ?, 'IDLE', CURRENT_TIMESTAMP)
@@ -15,7 +16,7 @@ class CheckpointManager {
     stmt.run(runId, objective);
   }
 
-  saveCheckpoint(state) {
+  saveCheckpoint(state = null) {
     const runStmt = this.db.prepare(`
       UPDATE agent_runs
       SET status = ?, updated_at = CURRENT_TIMESTAMP
@@ -35,7 +36,7 @@ class CheckpointManager {
     );
   }
 
-  getLatestCheckpoint(runId) {
+  getLatestCheckpoint(runId = '') {
     const stmt = this.db.prepare(`
       SELECT state_json FROM agent_checkpoints
       WHERE run_id = ?
@@ -46,14 +47,14 @@ class CheckpointManager {
     return row ? AgentState.fromJSON(row.state_json) : null;
   }
 
-  hasPendingRun() {
+  hasPendingRun({ statuses = ['SUCCESS', 'CANCELLED'] } = {}) {
     const stmt = this.db.prepare(`
       SELECT run_id FROM agent_runs
-      WHERE status NOT IN ('SUCCESS', 'CANCELLED')
+      WHERE status NOT IN (${statuses.map(() => '?').join(', ')})
       ORDER BY updated_at DESC
       LIMIT 1
     `);
-    return stmt.get();
+    return stmt.get(...statuses);
   }
 
   getPendingRun() {
@@ -62,7 +63,7 @@ class CheckpointManager {
     return this.getLatestCheckpoint(run.run_id);
   }
 
-  markRunCompleted(runId, status = 'SUCCESS') {
+  markRunCompleted(runId = '', status = 'SUCCESS') {
     const stmt = this.db.prepare(`
       UPDATE agent_runs
       SET status = ?, updated_at = CURRENT_TIMESTAMP

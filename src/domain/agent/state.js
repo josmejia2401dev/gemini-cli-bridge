@@ -19,9 +19,9 @@ class AgentState {
     failedSteps = [],
     filesRead = [],
     filesModified = [],
-    toolCalls = [],
-    errors = [],
-    dag = []
+    toolCalls = [], // item: { tool: '', args: { path: '', filePath: '', content: '' }, result: null, timestamp: '' }
+    errors = [], // item: { step: 1, error: '', timestamp: '' }
+    dag = { tasks: [] }
   } = {}) {
     this.runId = runId;
     this.objective = objective;
@@ -33,10 +33,13 @@ class AgentState {
     this.filesModified = Array.from(new Set(filesModified));
     this.toolCalls = toolCalls;
     this.errors = errors;
-    this.dag = dag instanceof TaskDAG ? dag : TaskDAG.fromJSON(dag);
+    this.dag = dag instanceof TaskDAG ? dag : TaskDAG.fromJSON({ data: dag });
   }
 
-  transition(newStatus) {
+  transition(newStatus = 'IDLE') {
+    if (this.status === newStatus) {
+      return;
+    }
     const allowed = VALID_TRANSITIONS[this.status];
     if (allowed && !allowed.includes(newStatus)) {
       console.warn(`  ⚠️ [AGENT_STATE] Transición de estado rechazada: '${this.status}' -> '${newStatus}'`);
@@ -45,28 +48,28 @@ class AgentState {
     this.status = newStatus;
   }
 
-  addToolCall(tool, args, result) {
+  addToolCall({ tool = '', args = { path: '', content: '' }, result = null } = {}) {
     this.toolCalls.push({
       tool,
-      args,
+      args: { ...(args || {}) },
       result,
       timestamp: new Date().toISOString()
     });
   }
 
-  addFileRead(filePath) {
+  addFileRead(filePath = '') {
     if (!this.filesRead.includes(filePath)) {
       this.filesRead.push(filePath);
     }
   }
 
-  addFileModified(filePath) {
+  addFileModified(filePath = '') {
     if (!this.filesModified.includes(filePath)) {
       this.filesModified.push(filePath);
     }
   }
 
-  addError(error) {
+  addError(error = 'Fallo no especificado') {
     this.errors.push({
       step: this.currentStep,
       error: typeof error === 'string' ? error : error.message,
@@ -91,7 +94,7 @@ class AgentState {
     };
   }
 
-  static fromJSON(data) {
+  static fromJSON(data = { tasks: [] }) {
     const parsed = typeof data === 'string' ? JSON.parse(data) : data;
     return new AgentState(parsed);
   }

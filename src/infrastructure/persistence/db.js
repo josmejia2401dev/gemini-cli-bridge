@@ -2,7 +2,7 @@ const Database = require('better-sqlite3');
 const paths = require('../../shared/config/paths');
 
 class MemoryDatabase {
-  constructor(dbPath = null) {
+  constructor({ dbPath = null } = {}) {
     const finalPath = dbPath || paths.SQLITE_DB;
     this.db = new Database(finalPath);
     this.db.pragma('foreign_keys = ON');

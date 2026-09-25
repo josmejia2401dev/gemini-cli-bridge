@@ -8,7 +8,7 @@ const FileSystemUtils = require('../../shared/utils/fileSystemUtils');
  * Centraliza la clasificación de intenciones, el enrutamiento y el despacho de comandos del sistema.
  */
 class ExecutionDecisionEngine {
-  constructor({ geminiClient, projectRoot, dynamicCommands = {} } = {}) {
+  constructor({ geminiClient = null, projectRoot = '', dynamicCommands = {} } = {}) {
     this.gemini = geminiClient;
     this.projectRoot = projectRoot;
     this.dynamicCommands = dynamicCommands;
@@ -26,26 +26,6 @@ class ExecutionDecisionEngine {
         extractArgs: (m) => ({ paths: [m[1].trim()] })
       },
       {
-        regex: /^qui[ée]n\s+importa\s+(.+)$/i,
-        tool: 'who_imports',
-        extractArgs: (m) => ({ target: m[1].trim() })
-      },
-      {
-        regex: /^dependencias\s+de\s+(.+)$/i,
-        tool: 'get_dependencies',
-        extractArgs: (m) => ({ filePath: m[1].trim() })
-      },
-      {
-        regex: /^d[óo]nde\s+se\s+(?:define|ubica|encuentra)\s+(.+)$/i,
-        tool: 'find_symbol',
-        extractArgs: (m) => ({ symbol: m[1].trim() })
-      },
-      {
-        regex: /^analiza\s+(?:el\s+)?impacto\s+de\s+(.+)$/i,
-        tool: 'analyze_impact',
-        extractArgs: (m) => ({ filePath: m[1].trim() })
-      },
-      {
         regex: /^ejecuta\s+(.+)$/i,
         tool: 'execute_command',
         extractArgs: (m) => ({ command: m[1].trim() })
@@ -60,11 +40,11 @@ class ExecutionDecisionEngine {
     this.directCliPrefixes = /^(npm\s+|mvn\s+|gradlew?\s+|node\s+|python\s+|docker\s+|cargo\s+|go\s+|npx\s+)/i;
   }
 
-  setProjectRoot(newRoot) {
+  setProjectRoot(newRoot = '') {
     this.projectRoot = newRoot;
   }
 
-  setGeminiClient(geminiClient) {
+  setGeminiClient(geminiClient = null) {
     this.gemini = geminiClient;
   }
 
@@ -77,7 +57,7 @@ class ExecutionDecisionEngine {
    * @param {string} instruction
    * @returns {{ mode: 'DIRECT_CHAT' | 'DETERMINISTIC' | 'LLM_REQUIRED', cleanPrompt: string, tool?: string, args?: Object }}
    */
-  classify(instruction) {
+  classify(instruction = '') {
     if (!instruction || typeof instruction !== 'string') {
       return { mode: 'DIRECT_CHAT', cleanPrompt: '' };
     }
@@ -126,7 +106,7 @@ class ExecutionDecisionEngine {
   /**
    * Método principal de procesamiento y despacho de entradas CLI.
    */
-  async processInput(instruction, repl) {
+  async processInput(instruction = '', repl = null) {
     if (!instruction || typeof instruction !== 'string') {
       return { mode: 'SYSTEM', skip: true };
     }
@@ -247,7 +227,7 @@ class ExecutionDecisionEngine {
     console.log('  [/reload-rules] Inyectando reglas actualizadas en el chat activo...');
     const reloadPrompt = SYSTEM_PROMPTS.RELOAD_RULES(this.getGlobalRules());
     if (this.gemini) {
-      await this.gemini.sendPrompt(reloadPrompt);
+      await this.gemini.sendPrompt({ prompt: reloadPrompt });
     }
     console.log('  ✅ Reglas actualizadas en memoria.\n');
   }
@@ -261,7 +241,7 @@ class ExecutionDecisionEngine {
     }
   }
 
-  saveChats(chats) {
+  saveChats(chats = {}) {
     FileSystemUtils.writeFile(this.chatsFile, JSON.stringify(chats, null, 2));
   }
 
@@ -280,7 +260,7 @@ class ExecutionDecisionEngine {
     console.log('  ✅ Chat nuevo listo.');
   }
 
-  handleChatSave(instruction) {
+  handleChatSave(instruction = '') {
     const name = instruction.substring(11).trim();
     if (!name) return console.log('  ❌ Debes especificar un nombre: /chat-save <nombre>');
 
@@ -307,7 +287,7 @@ class ExecutionDecisionEngine {
     console.log();
   }
 
-  async handleChatLoad(instruction) {
+  async handleChatLoad(instruction = '') {
     const name = instruction.substring(11).trim();
     if (!name) return console.log('  ❌ Debes especificar un nombre.');
 
@@ -327,7 +307,7 @@ class ExecutionDecisionEngine {
     console.log(`  ✅ Chat "${name}" cargado y listo.`);
   }
 
-  handleChatDelete(instruction) {
+  handleChatDelete(instruction = '') {
     const name = instruction.substring(13).trim();
     if (!name) return console.log('  ❌ Debes especificar un nombre.');
 
@@ -339,7 +319,7 @@ class ExecutionDecisionEngine {
     console.log(`  ✅ Chat "${name}" eliminado.`);
   }
 
-  async handleUploadFiles(instruction) {
+  async handleUploadFiles(instruction = '') {
     const userMessage = instruction.substring('/upload-files'.length).trim();
     console.log('  [/upload-files] Subiendo paquete de contexto...');
     const result = createContextFile(this.projectRoot);
@@ -347,7 +327,7 @@ class ExecutionDecisionEngine {
     if (result.fileCount > 0) {
       const prompt = SYSTEM_PROMPTS.UPLOAD_FILES(result.fileCount);
       if (this.gemini) {
-        await this.gemini.sendPrompt(prompt, result.tempFilePath);
+        await this.gemini.sendPrompt({ prompt, filePath: result.tempFilePath });
       }
       console.log('  Contexto subido exitosamente.\n');
 
@@ -359,7 +339,7 @@ class ExecutionDecisionEngine {
     return { mode: 'SYSTEM', skip: true };
   }
 
-  async handleSyncPartial(instruction) {
+  async handleSyncPartial(instruction = '') {
     const args = instruction.substring(5).trim();
     const filesToSync = args.split(' ').map(f => f.trim()).filter(f => f.length > 0);
     if (filesToSync.length === 0) return console.log('  Especifica al menos un archivo.');
@@ -368,7 +348,7 @@ class ExecutionDecisionEngine {
     const result = createPartialContextFile(this.projectRoot, filesToSync);
     if (result.fileCount > 0 && this.gemini) {
       const prompt = SYSTEM_PROMPTS.SYNC_PARTIAL(result.fileCount);
-      await this.gemini.sendPrompt(prompt, result.tempFilePath);
+      await this.gemini.sendPrompt({ prompt, filePath: result.tempFilePath });
       console.log('  Archivos sincronizados.\n');
     }
   }
@@ -382,7 +362,7 @@ class ExecutionDecisionEngine {
     console.log(`  Historial guardado en: ${historyPath}\n`);
   }
 
-  handleNewRepo(instruction) {
+  handleNewRepo(instruction = '') {
     const targetPath = instruction.substring(10).trim();
     if (!targetPath) {
       console.log('    Debes especificar una ruta: /new-repo <ruta>');

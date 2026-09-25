@@ -4,18 +4,18 @@ const SYSTEM_PROMPTS = require('../../shared/config/prompts');
 const { taskPlanSchema } = require('../../shared/schemas/toolSchemas');
 
 class TaskDecomposer {
-  getDecompositionPrompt(userObjective, rejectionFeedback = null) {
+  getDecompositionPrompt({ userObjective = '', rejectionFeedback = null } = {}) {
     return SYSTEM_PROMPTS.TASK_DECOMPOSER(userObjective, rejectionFeedback);
   }
 
-  parseResponse(responseText, userObjective) {
+  parseResponse({ responseText = '', userObjective = '' } = {}) {
     // 1. Intentar parseo estándar con OutputParser y esquema Zod
     const parseResult = OutputParser.parseToolCall(responseText);
 
     if (parseResult.success && parseResult.data?.tool === 'task_plan') {
       const validation = taskPlanSchema.safeParse(parseResult.data.arguments);
       if (validation.success && validation.data.tasks.length > 0) {
-        return new TaskDAG(validation.data.tasks);
+        return new TaskDAG({ tasks: validation.data.tasks });
       }
     }
 
@@ -23,17 +23,17 @@ class TaskDecomposer {
     const regexTasks = this.extractTasksWithRegex(responseText);
     if (regexTasks.length > 0) {
       console.log(`  🧠 [TASK DAG] Se recuperaron ${regexTasks.length} subtarea(s) mediante el extractor de rescate.`);
-      return new TaskDAG(regexTasks);
+      return new TaskDAG({ tasks: regexTasks });
     }
 
     // 3. Fallback atómico final si todo falla
     console.log('  ⚠️ [TASK DAG] No se pudo extraer la estructura de plan. Usando fallback de tarea única.');
-    return new TaskDAG([
+    return new TaskDAG({ tasks: [
       { id: 'task_1', description: userObjective, dependencies: [] }
-    ]);
+    ] });
   }
 
-  extractTasksWithRegex(text) {
+  extractTasksWithRegex(text = '') {
     const tasks = [];
     const taskObjects = text.match(/\{[^{}]*description[^{}]*\}/gi) || [];
 

@@ -3,7 +3,7 @@ const fs = require('fs');
 const ILLMClient = require('../contracts/ILLMClient');
 
 class GeminiApiClient extends ILLMClient {
-    constructor(apiKey) {
+    constructor({ apiKey = '' } = {}) {
         super();
         if (!apiKey) throw new Error("Se requiere una API Key de Gemini.");
         this.apiKey = apiKey;
@@ -24,12 +24,12 @@ class GeminiApiClient extends ILLMClient {
         }
     }
 
-    async generate({ prompt, fileToUpload = null }) {
-        const text = await this.sendPrompt(prompt, fileToUpload);
+    async generate({ prompt = '', fileToUpload = null } = {}) {
+        const text = await this.sendPrompt({ prompt, filePath: fileToUpload });
         return { text };
     }
 
-    async sendPrompt(prompt, filePath = null) {
+    async sendPrompt({ prompt = '', filePath = null } = {}) {
         this.abortController = new AbortController();
         let finalPrompt = prompt;
 
@@ -58,7 +58,7 @@ class GeminiApiClient extends ILLMClient {
         }
     }
 
-    async stopGeneration() {
+    async stopGeneration({ reason = 'USER_REQUEST' } = {}) {
         if (this.abortController) {
             console.log('🛑 Deteniendo la generación de Gemini...');
             this.abortController.abort();

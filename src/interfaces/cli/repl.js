@@ -6,7 +6,7 @@ class REPL {
     this.rl = readline.createInterface({ input, output });
   }
 
-  async askQuestion(prompt) {
+  async askQuestion(prompt = '') {
     try {
       return await this.rl.question(prompt);
     } catch (err) {

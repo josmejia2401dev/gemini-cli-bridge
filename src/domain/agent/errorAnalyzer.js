@@ -7,7 +7,7 @@ class ErrorAnalyzer {
   /**
    * Elimina ruido del stacktrace (ruido de SO, banderas de formato).
    */
-  static cleanStackTrace(rawError) {
+  static cleanStackTrace(rawError = '') {
     if (!rawError || typeof rawError !== 'string') return '';
     
     return rawError
@@ -27,7 +27,7 @@ class ErrorAnalyzer {
   /**
    * Extrae la firma principal del error.
    */
-  static extractSignature(cleanedError) {
+  static extractSignature(cleanedError = '') {
     const lines = cleanedError.split('\n');
     const mainErrorLine = lines.find(line => 
        line.includes('Error:') || 
@@ -43,13 +43,13 @@ class ErrorAnalyzer {
   /**
    * Analiza un error de consola consultando la memoria episódica.
    */
-  static analyze(command, rawError, episodicMemory) {
+  static analyze({ command = '', rawError = '', episodicMemory = null } = {}) {
     const cleanedError = this.cleanStackTrace(rawError);
     const signature = this.extractSignature(cleanedError);
     let knownSolution = null;
 
     if (episodicMemory && typeof episodicMemory.findKnownSolution === 'function') {
-      knownSolution = episodicMemory.findKnownSolution(signature, command);
+      knownSolution = episodicMemory.findKnownSolution({ errorSignature: signature, command });
     }
 
     if (knownSolution) {

@@ -1,148 +1,107 @@
+const ExecutionTask = require('./contracts/executionTask');
+
 class TaskDAG {
-  constructor(tasks = []) {
-    // Normaliza el parámetro recibiendo Arreglos u Objetos de la deserialización de JSON
+  constructor({
+    tasks = [] // Cada tarea: { id: '', description: '', tool: null, args: { path: '', filePath: '', content: '', command: '', query: '', target: '', symbol: '', paths: [], createDirs: true, status: 'SUCCESS', summary: '', reason: '', task_id: '' }, context: { source: '', workingDirectory: '', environment: {}, variables: {}, metadata: {} }, dependencies: [], status: 'pending' }.
+  } = {}) {
     const taskArray = Array.isArray(tasks)
       ? tasks
       : (tasks && typeof tasks === 'object' ? Object.values(tasks) : []);
 
-    this.tasks = new Map(
-      taskArray.map(t => [
-        t.id,
-        {
-          id: t.id,
-          description: t.description,
-          dependencies: t.dependencies || [],
-          status: t.status || 'pending'
-        }
-      ])
-    );
-
-    this.validate();
+    this.tasks = new Map();
+    for (const rawTask of taskArray) {
+      if (!rawTask || !rawTask.id || !rawTask.description) continue;
+      const task = rawTask instanceof ExecutionTask ? rawTask : new ExecutionTask({
+        id: rawTask.id,
+        description: rawTask.description,
+        tool: rawTask.tool ?? null,
+        args: rawTask.args ?? { path: '', filePath: '', content: '', command: '', query: '', target: '', symbol: '', paths: [], createDirs: true, status: 'SUCCESS', summary: '', reason: '', task_id: '' },
+        context: rawTask.context ?? { source: '', workingDirectory: '', environment: {}, variables: {}, metadata: {} },
+        dependencies: rawTask.dependencies ?? []
+      });
+      if (this.tasks.has(task.id)) throw new Error(`[DAG ERROR] ID duplicado: '${task.id}'.`);
+      this.tasks.set(task.id, {
+        ...task.toJSON(),
+        status: rawTask.status || 'pending'
+      });
+    }
+    if (this.tasks.size > 0) this.validate();
   }
 
   validate() {
-    for (const [id, task] of this.tasks.entries()) {
+    if (this.tasks.size === 0) throw new Error('[DAG ERROR] El DAG debe contener al menos una tarea.');
+    const ids = new Set(this.tasks.keys());
+    for (const task of this.tasks.values()) {
+      if (!task.description.trim()) throw new Error(`[DAG ERROR] La tarea '${task.id}' no tiene descripción.`);
       for (const depId of task.dependencies) {
-        if (depId === id) {
-          throw new Error(`[DAG ERROR] La tarea '${id}' depende de sí misma.`);
-        }
-        if (!this.tasks.has(depId)) {
-          throw new Error(`[DAG ERROR] La tarea '${id}' hace referencia a una dependencia inexistente: '${depId}'.`);
-        }
+        if (depId === task.id) throw new Error(`[DAG ERROR] La tarea '${task.id}' depende de sí misma.`);
+        if (!ids.has(depId)) throw new Error(`[DAG ERROR] La tarea '${task.id}' referencia una dependencia inexistente: '${depId}'.`);
       }
     }
-
-    const visited = new Map();
-    const hasCycle = (taskId) => {
-      visited.set(taskId, 'visiting');
-      const task = this.tasks.get(taskId);
-      for (const depId of (task?.dependencies || [])) {
-        const state = visited.get(depId);
-        if (state === 'visiting') return true;
-        if (!state && hasCycle(depId)) return true;
+    const state = new Map();
+    const visit = (id) => {
+      state.set(id, 'visiting');
+      for (const dep of this.tasks.get(id).dependencies) {
+        if (state.get(dep) === 'visiting') return true;
+        if (!state.get(dep) && visit(dep)) return true;
       }
-      visited.set(taskId, 'visited');
+      state.set(id, 'visited');
       return false;
     };
-
-    for (const taskId of this.tasks.keys()) {
-      if (!visited.has(taskId)) {
-        if (hasCycle(taskId)) {
-          throw new Error(`[DAG ERROR] Se detectó un ciclo infinito de dependencias en la estructura del DAG.`);
-        }
-      }
-    }
+    for (const id of this.tasks.keys()) if (!state.get(id) && visit(id)) throw new Error('[DAG ERROR] Se detectó un ciclo de dependencias.');
+    return true;
   }
 
-  // Retorna todas las tareas pendientes cuyas dependencias ya están completadas
-  getNextTasks() {
-    const executables = [];
+  getNextTasks({ status = 'pending' } = {}) {
+    return [...this.tasks.values()].filter(task =>
+      task.status === status &&
+      task.dependencies.every(dependencyId => this.tasks.get(dependencyId)?.status === 'completed')
+    );
+  }
+
+  updateStatus({ id = '', status = 'pending' } = {}) {
+    const task = this.tasks.get(id);
+    if (!task) return false;
+    const allowed = {
+      pending: ['in_progress'],
+      in_progress: ['completed', 'failed'],
+      failed: ['pending', 'in_progress'],
+      completed: ['in_progress', 'pending']
+    }[task.status];
+    if (allowed && !allowed.includes(status)) return false;
+    task.status = status;
+    return true;
+  }
+
+  markInProgress(id = '') { return this.updateStatus({ id, status: 'in_progress' }); }
+  markCompleted(id = '') { return this.updateStatus({ id, status: 'completed' }); }
+  markFailed(id = '') { return this.updateStatus({ id, status: 'failed' }); }
+  isCompleted() { return this.tasks.size > 0 && [...this.tasks.values()].every(task => task.status === 'completed'); }
+  hasFailed() { return [...this.tasks.values()].some(task => task.status === 'failed'); }
+  getSequence() { return [...this.tasks.values()]; }
+
+  formatSummary({ title = 'PLAN DE EJECUCIÓN - TASK DAG' } = {}) {
+    let out = `\n  📋 [${title}]\n  ===============================================================\n`;
     for (const task of this.tasks.values()) {
-      if (task.status === 'pending') {
-        const depsSatisfied = task.dependencies.every(depId => {
-          const dep = this.tasks.get(depId);
-          return dep && dep.status === 'completed';
-        });
-        if (depsSatisfied) {
-          executables.push(task);
-        }
-      }
+      const deps = task.dependencies.length ? ` (Depende de: ${task.dependencies.join(', ')})` : ' (Independiente / Lista)';
+      const icon = task.status === 'completed' ? '✅' : task.status === 'in_progress' ? '⏳' : task.status === 'failed' ? '❌' : '📌';
+      out += `  ${icon} [${task.id}] ${task.description}${deps}\n`;
     }
-    return executables;
-  }
-
-  updateStatus(id, status) {
-    if (this.tasks.has(id)) {
-      const task = this.tasks.get(id);
-      const validTransitions = {
-        pending: ['in_progress'],
-        in_progress: ['completed', 'failed'],
-        failed: ['pending', 'in_progress'],
-        completed: ['in_progress', 'pending']
-      };
-
-      const allowed = validTransitions[task.status];
-      if (allowed && !allowed.includes(status)) {
-        console.warn(`  ⚠️ [DAG] Transición de subtarea rechazada en [${id}]: '${task.status}' -> '${status}'`);
-        return;
-      }
-      task.status = status;
-    }
-  }
-
-  markInProgress(id) {
-    this.updateStatus(id, 'in_progress');
-  }
-
-  markCompleted(id) {
-    this.updateStatus(id, 'completed');
-  }
-
-  markFailed(id) {
-    this.updateStatus(id, 'failed');
-  }
-
-  isCompleted() {
-    if (!this.tasks || this.tasks.size === 0) {
-      return false;
-    }
-    return Array.from(this.tasks.values()).every(t => t.status === 'completed');
-  }
-
-  hasFailed() {
-    if (!this.tasks || this.tasks.size === 0) {
-      return false;
-    }
-    return Array.from(this.tasks.values()).some(t => t.status === 'failed');
-  }
-
-  formatSummary() {
-    let output = '\n  📋 [PLAN DE EJECUCIÓN - TASK DAG]\n';
-    output += '  ===============================================================\n';
-    for (const task of this.tasks.values()) {
-      const deps = task.dependencies.length > 0
-        ? ` (Depende de: ${task.dependencies.join(', ')})`
-        : ' (Independiente / Lista)';
-
-      let icon = '📌';
-      if (task.status === 'completed') icon = '✅';
-      if (task.status === 'in_progress') icon = '⏳';
-      if (task.status === 'failed') icon = '❌';
-
-      output += `  ${icon} [${task.id}] ${task.description}${deps}\n`;
-    }
-    output += '  ===============================================================\n';
-    return output;
+    return out + '  ===============================================================\n';
   }
 
   toJSON() {
-    return Array.from(this.tasks.values());
+    return [...this.tasks.values()].map(task => ({
+      ...task,
+      args: { ...task.args },
+      context: { ...task.context },
+      dependencies: [...task.dependencies]
+    }));
   }
 
-  static fromJSON(data) {
-    if (!data) return new TaskDAG([]);
-    const tasksArray = Array.isArray(data) ? data : (data.tasks || Object.values(data));
-    return new TaskDAG(tasksArray);
+  static fromJSON({ data = { tasks: [] } } = {}) {
+    const parsed = Array.isArray(data) ? data : (data?.tasks ? data.tasks : Object.values(data || {}));
+    return new TaskDAG({ tasks: parsed });
   }
 }
 

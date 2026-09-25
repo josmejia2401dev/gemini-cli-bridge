@@ -1,5 +1,5 @@
 const FileSystemUtils = require('./fileSystemUtils');
-const PatternEngine = require('../../domain/context/patternEngine');
+const PatternEngine = require('./patternEngine');
 
 const patternEngine = new PatternEngine();
 
@@ -93,4 +93,44 @@ function createPartialContextFile(projectRoot, filePaths) {
   return { tempFilePath, fileCount: fileList.length, contextText };
 }
 
-module.exports = { scanProject, createContextFile, createPartialContextFile };
+
+function searchProject({
+  projectRoot = '',
+  query = '',
+  caseSensitive = false,
+  maxMatches = 200
+} = {}) {
+  const results = [];
+  const needle = caseSensitive ? String(query) : String(query).toLowerCase();
+  if (!needle || !FileSystemUtils.fileExists(projectRoot)) return results;
+
+  const visit = (dir) => {
+    if (results.length >= maxMatches) return;
+    for (const item of FileSystemUtils.readDir(dir)) {
+      if (results.length >= maxMatches) return;
+      if (item.isDirectory) {
+        if (!patternEngine.isDirIgnored(item.name)) visit(item.fullPath);
+        continue;
+      }
+      if (!patternEngine.shouldProcessFile(item.fullPath)) continue;
+
+      let content = '';
+      try { content = FileSystemUtils.readFile(item.fullPath); } catch (_) { continue; }
+      const haystack = caseSensitive ? content : content.toLowerCase();
+      if (!haystack.includes(needle)) continue;
+
+      const relPath = FileSystemUtils.getRelativePath(projectRoot, item.fullPath);
+      const matches = [];
+      content.split(/\r?\n/).forEach((line, index) => {
+        const lineValue = caseSensitive ? line : line.toLowerCase();
+        if (lineValue.includes(needle)) matches.push({ line: index + 1, text: line.trim() });
+      });
+      results.push({ file: relPath, matches });
+    }
+  };
+
+  visit(projectRoot);
+  return results;
+}
+
+module.exports = { scanProject, createContextFile, createPartialContextFile, searchProject };

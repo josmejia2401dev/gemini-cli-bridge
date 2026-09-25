@@ -9,7 +9,11 @@ class PolicyEngine {
    * @param {Object} params - { toolName, args, toolDef }
    * @returns {{ decision: 'ALLOW' | 'ASK' | 'DENY', riskLevel: string, reason: string }}
    */
-  evaluate({ toolName, args, toolDef }) {
+  evaluate({
+    toolName = '',
+    args = { path: '', content: '', command: '' },
+    toolDef = { name: '', description: '', riskLevel: 'LOW' }
+  } = {}) {
     const riskLevel = toolDef?.riskLevel || 'LOW';
 
     if (riskLevel === 'HIGH' || riskLevel === 'CRITICAL') {

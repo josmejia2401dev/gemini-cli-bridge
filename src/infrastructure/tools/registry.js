@@ -2,33 +2,21 @@ const {
   executeCommandSchema,
   readFilesSchema,
   searchCodeSchema,
-  whoImportsSchema,
-  getDependenciesSchema,
-  findSymbolSchema,
-  analyzeImpactSchema,
+  writeFileSchema,
   taskCompleteSchema
 } = require('../../shared/schemas/toolSchemas');
 const { execSync } = require('child_process');
 const PolicyEngine = require('./policyEngine');
-const RepositoryIndexer = require('../../domain/context/indexer');
-const RepositoryIntelligence = require('../../domain/context/repositoryIntel');
-const ImpactAnalysis = require('../../domain/context/impactAnalysis');
 const FileSystemUtils = require('../../shared/utils/fileSystemUtils');
+const { searchProject } = require('../../shared/utils/fileScanner');
 
 class ToolRegistry {
-  constructor() {
+  constructor({ policyEngine = null } = {}) {
     this.tools = new Map();
-    this.intelCache = new Map();
-    this.policyEngine = new PolicyEngine();
+    this.policyEngine = policyEngine || new PolicyEngine();
     this.registerDefaultTools();
   }
 
-  getSharedIntel(projectRoot) {
-    if (!this.intelCache.has(projectRoot)) {
-      this.intelCache.set(projectRoot, new RepositoryIntelligence(projectRoot));
-    }
-    return this.intelCache.get(projectRoot);
-  }
 
   registerDefaultTools() {
     this.registerTool({
@@ -36,9 +24,9 @@ class ToolRegistry {
       description: 'Ejecuta un comando en la terminal',
       riskLevel: 'LOW',
       schema: executeCommandSchema,
-      execute: async (args, context) => {
+      execute: async (args = { command: '' }, context = { projectRoot: '', repl: null }) => {
         try {
-          const output = execSync(args.command, { cwd: context.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
+          const output = execSync(args.command || '', { cwd: context.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
           return { output };
         } catch (err) {
           let fullError = err.message;
@@ -58,7 +46,10 @@ class ToolRegistry {
       description: 'Lee uno o varios archivos del proyecto',
       riskLevel: 'LOW',
       schema: readFilesSchema,
-      execute: async (args, context) => {
+      execute: async (
+        args = { paths: [] },
+        context = { projectRoot: '', repl: null }
+      ) => {
         const results = {};
         for (const relPath of args.paths) {
           const content = FileSystemUtils.safeReadFile(context.projectRoot, relPath);
@@ -72,58 +63,31 @@ class ToolRegistry {
 
     this.registerTool({
       name: 'search_code',
-      description: 'Busca símbolos o texto en el repositorio local sin usar la IA',
+      description: 'Busca texto directamente en archivos del proyecto sin construir ni mantener un índice del repositorio',
       riskLevel: 'LOW',
       schema: searchCodeSchema,
-      execute: async (args, context) => {
-        const indexer = new RepositoryIndexer(context.projectRoot);
-        indexer.buildIndex();
-        const matches = indexer.searchSymbols(args.query);
-        return { query: args.query, matchesCount: matches.length, matches };
-      }
+      execute: async (
+        args = { query: '' },
+        context = { projectRoot: '', repl: null }
+      ) => ({
+        query: args.query,
+        matches: searchProject({ projectRoot: context.projectRoot, query: args.query, caseSensitive: false, maxMatches: 200 })
+      })
     });
 
     this.registerTool({
-      name: 'who_imports',
-      description: 'Consulta de forma determinística qué archivos importan una clase, módulo o archivo',
-      riskLevel: 'LOW',
-      schema: whoImportsSchema,
-      execute: async (args, context) => {
-        const intel = this.getSharedIntel(context.projectRoot);
-        return intel.whoImports(args.target);
-      }
-    });
-
-    this.registerTool({
-      name: 'get_dependencies',
-      description: 'Consulta las dependencias e importaciones de un archivo específico',
-      riskLevel: 'LOW',
-      schema: getDependenciesSchema,
-      execute: async (args, context) => {
-        const intel = this.getSharedIntel(context.projectRoot);
-        return intel.getDependencies(args.filePath);
-      }
-    });
-
-    this.registerTool({
-      name: 'find_symbol',
-      description: 'Localiza en qué archivos está definido o exportado un símbolo específico',
-      riskLevel: 'LOW',
-      schema: findSymbolSchema,
-      execute: async (args, context) => {
-        const intel = this.getSharedIntel(context.projectRoot);
-        return intel.findSymbolDefinition(args.symbol);
-      }
-    });
-
-    this.registerTool({
-      name: 'analyze_impact',
-      description: 'Determina qué módulos y pruebas podrían verse afectados antes de editar un archivo',
-      riskLevel: 'LOW',
-      schema: analyzeImpactSchema,
-      execute: async (args, context) => {
-        const analyzer = new ImpactAnalysis(context.projectRoot);
-        return analyzer.analyze(args.filePath);
+      name: 'write_file',
+      description: 'Crea o reemplaza un archivo dentro del proyecto vinculado',
+      riskLevel: 'HIGH',
+      schema: writeFileSchema,
+      execute: async (
+        args = { filePath: '', content: '', createDirs: true },
+        context = { projectRoot: '', repl: null }
+      ) => {
+        const absPath = FileSystemUtils.resolveSafePath(context.projectRoot, args.filePath);
+        if (args.createDirs) FileSystemUtils.ensureDirForFile(absPath);
+        FileSystemUtils.writeFile(absPath, args.content);
+        return { written: true, filePath: args.filePath, bytes: Buffer.byteLength(args.content, 'utf8') };
       }
     });
 
@@ -132,7 +96,7 @@ class ToolRegistry {
       description: 'Confirma formalmente la finalización (exitosa o fallida) de la subtarea activa.',
       riskLevel: 'LOW',
       schema: taskCompleteSchema,
-      execute: async (args) => {
+      execute: async (args = { status: 'SUCCESS', summary: '', reason: '' }, context = { projectRoot: '', repl: null }) => {
         return {
           completed: true,
           status: args.status,
@@ -143,11 +107,17 @@ class ToolRegistry {
     });
   }
 
-  registerTool({ name, description, riskLevel, schema, execute }) {
+  registerTool({
+    name = '',
+    description = '',
+    riskLevel = 'LOW',
+    schema = null,
+    execute = async (args = {}, context = {}) => null
+  } = {}) {
     this.tools.set(name, { name, description, riskLevel, schema, execute });
   }
 
-  getTool(name) {
+  getTool(name = '') {
     return this.tools.get(name);
   }
 
@@ -163,7 +133,11 @@ class ToolRegistry {
    * Único punto de entrada para ejecutar una herramienta.
    * Aplica validación Zod, evaluación de políticas de seguridad y confirmación interactiva.
    */
-  async executeTool(name, args, context = {}) {
+  async executeTool(
+    name = '',
+    args = { path: '', filePath: '', content: '', command: '', query: '', target: '', symbol: '', paths: [], createDirs: true, status: 'SUCCESS', summary: '', reason: '', task_id: '' },
+    context = { projectRoot: '', repl: null }
+  ) {
     const tool = this.getTool(name);
     if (!tool) {
       throw new Error(`Herramienta '${name}' no registrada.`);

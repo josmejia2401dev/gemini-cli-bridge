@@ -5,12 +5,15 @@ const LLMFactory = require('../infrastructure/llm/llmFactory');
 
 const ModelRouter = require('../infrastructure/llm/modelRouter');
 const ToolRegistry = require('../infrastructure/tools/registry');
-const AgentRuntime = require('../domain/agent/runtime');
+const AgentRuntime = require('../domain/agent/core/agentRuntime');
+const PlanningSubflow = require('../domain/agent/subflows/planningSubflow');
+const ExecutionSubflow = require('../domain/agent/subflows/executionSubflow');
+const InterpreterSubflow = require('../domain/agent/subflows/interpreterSubflow');
+const RecoverySubflow = require('../domain/agent/subflows/recoverySubflow');
 const ExecutionDecisionEngine = require('../domain/agent/decisionEngine');
 const CheckpointManager = require('../infrastructure/persistence/checkpoint');
 const MemoryDatabase = require('../infrastructure/persistence/db');
 const EpisodicMemory = require('../infrastructure/persistence/episodic');
-const ExecutionLogger = require('../shared/observability/logger');
 const paths = require('../shared/config/paths');
 const SYSTEM_PROMPTS = require('../shared/config/prompts');
 
@@ -66,7 +69,7 @@ class Application {
     return {};
   }
 
-  async resolveProjectRoot(repl, forceAsk = false) {
+  async resolveProjectRoot(repl = null, forceAsk = false) {
     let projectRoot = forceAsk ? null : process.argv[2];
 
     if (!forceAsk && !projectRoot && FileSystemUtils.fileExists(this.repoPathFile)) {
@@ -89,7 +92,7 @@ class Application {
     return projectRoot;
   }
 
-  async resolveTargetChatUrl(repl) {
+  async resolveTargetChatUrl(repl = null) {
     const askForChatName = async () => {
       let chatName = '';
       while (!chatName) {
@@ -195,7 +198,7 @@ class Application {
     }
   }
 
-  setupSigintHandler(repl, getLlmClient) {
+  setupSigintHandler(repl = null, getLlmClient = () => null) {
     global.isProcessing = false;
     global.abortLoop = false;
     let sigintCount = 0;
@@ -225,7 +228,6 @@ class Application {
   async start() {
     this.displayBanner();
     const repl = new REPL();
-    const logger = new ExecutionLogger();
 
     let llmClient = null;
 
@@ -255,10 +257,10 @@ class Application {
 
     let projectRoot = await this.resolveProjectRoot(repl, isNewChat);
 
-    llmClient = LLMFactory.createClient(providerType, {
+    llmClient = LLMFactory.createClient({ type: providerType, options: {
       sessionDir: this.sessionDir,
       chatUrlFile: this.chatUrlFile
-    });
+    } });
 
     await llmClient.connect(targetUrl);
 
@@ -273,19 +275,18 @@ class Application {
 
         if (decision.skip) return;
 
-        logger.startExecution();
-        await agentRuntime.runLoop(decision.cleanPrompt, null, null, decision.mode, { isWebInitiated: true });
+        await agentRuntime.runLoop(decision.cleanPrompt, { mode: decision.mode });
 
         process.stdout.write('\nGemini Dev V3 > ');
       });
     }
 
-    const modelRouter = new ModelRouter(llmClient);
+    const modelRouter = new ModelRouter({ defaultProvider: llmClient });
 
     const toolRegistry = new ToolRegistry();
-    const dbConnection = new MemoryDatabase();
-    const checkpointManager = new CheckpointManager(dbConnection);
-    const episodicMemory = new EpisodicMemory(dbConnection);
+    const dbConnection = new MemoryDatabase({});
+    const checkpointManager = new CheckpointManager({ dbConnection });
+    const episodicMemory = new EpisodicMemory({ dbConnection });
 
     const decisionEngine = new ExecutionDecisionEngine({
       geminiClient: llmClient,
@@ -293,15 +294,23 @@ class Application {
       dynamicCommands: this.dynamicCommands
     });
 
+    const planningSubflow = new PlanningSubflow({ modelRouter, repl });
+    const executionSubflow = new ExecutionSubflow({ toolRegistry, projectRoot, repl });
+    const interpreterSubflow = new InterpreterSubflow({ toolRegistry });
+    const recoverySubflow = new RecoverySubflow({ episodicMemory });
+
     const agentRuntime = new AgentRuntime({
       modelRouter,
       toolRegistry,
       projectRoot,
       repl,
-      logger,
       episodicMemory,
       checkpointManager,
-      decisionEngine
+      decisionEngine,
+      planningSubflow,
+      executionSubflow,
+      interpreterSubflow,
+      recoverySubflow
     });
 
     console.log('\n===============================================================');
@@ -340,8 +349,7 @@ class Application {
 
         const resumeChoice = await repl.askQuestion('  ¿Deseas reanudar esta tarea? (Y/n): ');
         if (resumeChoice.trim().toLowerCase() !== 'n') {
-          logger.currentExecutionId = pendingState.runId;
-          await agentRuntime.runLoop(pendingState.objective, null, pendingState);
+          await agentRuntime.runLoop(pendingState.objective, { pendingState, mode: 'LLM_REQUIRED' });
         } else {
           checkpointManager.markRunCompleted(pendingState.runId, 'CANCELLED');
           console.log('  [SISTEMA] Tarea anterior descartada.\n');
@@ -372,9 +380,8 @@ class Application {
 
       if (decision.skip) continue;
 
-      logger.startExecution();
 
-      await agentRuntime.runLoop(decision.cleanPrompt, null, null, decision.mode);
+      await agentRuntime.runLoop(decision.cleanPrompt, { mode: decision.mode });
     }
   }
 }

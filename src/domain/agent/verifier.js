@@ -5,7 +5,7 @@ const FileSystemUtils = require("../../shared/utils/fileSystemUtils");
  * path traversal y comandos mal estructurados antes de tocar la consola.
  */
 class Verifier {
-  static preExecuteCommand(command) {
+  static preExecuteCommand(command = '') {
     const parts = command.trim().split(/\s+/);
     const executable = parts[0];
 
@@ -23,14 +23,14 @@ class Verifier {
     return { valid: true };
   }
 
-  static postExecute(output, stderr) {
+  static postExecute({ output = '', stderr = '' } = {}) {
     if (stderr && stderr.trim().length > 0 && !output) {
       return { success: false, error: stderr };
     }
     return { success: true };
   }
 
-  static verifyModifiedFiles(projectRoot, filesModified) {
+  static verifyModifiedFiles({ projectRoot = '', filesModified = [] } = {}) {
     const missing = [];
     for (const relPath of filesModified) {
       const content = FileSystemUtils.safeReadFile(projectRoot, relPath);

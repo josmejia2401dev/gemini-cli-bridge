@@ -12,20 +12,10 @@ const searchCodeSchema = z.object({
   query: z.string().min(1, 'El término de búsqueda es obligatorio.')
 });
 
-const whoImportsSchema = z.object({
-  target: z.string().min(1, 'El objetivo a consultar es obligatorio.')
-});
-
-const getDependenciesSchema = z.object({
-  filePath: z.string().min(1, 'La ruta del archivo es obligatoria.')
-});
-
-const findSymbolSchema = z.object({
-  symbol: z.string().min(1, 'El símbolo a buscar es obligatorio.')
-});
-
-const analyzeImpactSchema = z.object({
-  filePath: z.string().min(1, 'La ruta del archivo es obligatoria.')
+const writeFileSchema = z.object({
+  filePath: z.string().min(1, 'La ruta del archivo es obligatoria.'),
+  content: z.string(),
+  createDirs: z.boolean().optional().default(true)
 });
 
 const taskPlanSchema = z.object({
@@ -33,6 +23,9 @@ const taskPlanSchema = z.object({
     z.object({
       id: z.string().min(1, 'El ID de la tarea es obligatorio.'),
       description: z.string().min(1, 'La descripción de la tarea es obligatoria.'),
+      tool: z.string().min(1).optional(),
+      args: z.record(z.any()).optional().default({}),
+      context: z.record(z.any()).optional().default({}),
       dependencies: z.array(z.string()).optional().default([])
     })
   ).min(1, 'El plan debe contener al menos una tarea.')
@@ -54,10 +47,7 @@ module.exports = {
   executeCommandSchema,
   readFilesSchema,
   searchCodeSchema,
-  whoImportsSchema,
-  getDependenciesSchema,
-  findSymbolSchema,
-  analyzeImpactSchema,
+  writeFileSchema,
   taskPlanSchema,
   taskCompleteSchema
 };

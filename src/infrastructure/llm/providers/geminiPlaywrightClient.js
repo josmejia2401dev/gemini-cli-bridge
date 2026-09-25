@@ -5,12 +5,14 @@ const ILLMClient = require('../contracts/ILLMClient');
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class GeminiPlaywrightClient extends ILLMClient {
-  constructor(sessionDir, chatUrlFile) {
+  constructor({ sessionDir = '', chatUrlFile = '' } = {}) {
     super();
     this.sessionDir = sessionDir;
     this.chatUrlFile = chatUrlFile;
     this.context = null;
     this.page = null;
+    this.pendingWebGeneration = false;
+    this.isProgrammaticSending = false;
   }
 
   sanitizeUrl(rawUrl) {
@@ -47,8 +49,8 @@ class GeminiPlaywrightClient extends ILLMClient {
     }
   }
 
-  async generate({ prompt, fileToUpload = null, isWebInitiated = false }) {
-    const text = await this.sendPrompt(prompt, fileToUpload, { isWebInitiated });
+  async generate({ prompt = '', fileToUpload = null } = {}) {
+    const text = await this.sendPrompt({ prompt, filePath: fileToUpload });
     return { text };
   }
 
@@ -241,17 +243,21 @@ class GeminiPlaywrightClient extends ILLMClient {
     }
   }
 
-  async sendPrompt(prompt, filePath = null, options = {}) {
-    const isWebInitiated = options.isWebInitiated || false;
+  async sendPrompt({ prompt = '', filePath = null } = {}) {
+    const usePendingWebGeneration = this.pendingWebGeneration;
     this.isProgrammaticSending = true;
 
     try {
+      if (usePendingWebGeneration) {
+        this.pendingWebGeneration = false;
+      }
+
       const inputSelector = 'div[contenteditable="true"]';
       const inputBox = this.page.locator(inputSelector).first();
       await inputBox.waitFor({ state: 'visible' });
       let finalPrompt = prompt ? String(prompt) : '';
 
-      if (!isWebInitiated) {
+      if (!usePendingWebGeneration) {
         if (filePath && fs.existsSync(filePath)) {
           console.log('📄 Adjuntando archivo de contexto...');
           const stats = fs.statSync(filePath);
@@ -375,7 +381,7 @@ class GeminiPlaywrightClient extends ILLMClient {
     }
   }
 
-  async stopGeneration() {
+  async stopGeneration({ reason = 'USER_REQUEST' } = {}) {
     try {
       const stopButtonSelector = 'button[aria-label*="Detener"], button[aria-label*="Stop"], button[aria-label*="detener"], button[aria-label*="stop"]';
       const stopBtn = this.page.locator(stopButtonSelector).first();
@@ -408,7 +414,7 @@ class GeminiPlaywrightClient extends ILLMClient {
    * Envía texto simulando el pegado desde el portapapeles del usuario.
    * Activa los eventos nativos 'paste' e 'input' del DOM.
    */
-  async pasteFromClipboard(page, selector, text) {
+  async pasteFromClipboard(page = null, selector = '', text = '') {
     const locator = page.locator(selector).first();
     await locator.focus();
 
@@ -426,7 +432,7 @@ class GeminiPlaywrightClient extends ILLMClient {
   /**
    * Escribe texto carácter por carácter simulando la velocidad de tecleo humana.
    */
-  async typeHumanLike(page, selector, text) {
+  async typeHumanLike(page = null, selector = '', text = '') {
     const locator = page.locator(selector).first();
     await locator.focus();
 
@@ -442,7 +448,7 @@ class GeminiPlaywrightClient extends ILLMClient {
   }
 
 
-  async setupWebUIListener(onUserWebInputCallback) {
+  async setupWebUIListener(onUserWebInputCallback = null) {
     this.webInputCallback = onUserWebInputCallback;
     if (!this.page) return;
 
@@ -470,6 +476,8 @@ class GeminiPlaywrightClient extends ILLMClient {
         ) {
           return;
         }
+
+        this.pendingWebGeneration = true;
 
         if (typeof this.webInputCallback === 'function') {
           this.webInputCallback(cleanText);

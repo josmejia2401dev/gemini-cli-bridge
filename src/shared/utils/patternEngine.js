@@ -1,4 +1,4 @@
-const FileSystemUtils = require('../../shared/utils/fileSystemUtils');
+const FileSystemUtils = require('./fileSystemUtils');
 
 /**
  * Motor de patrones único para filtrado de archivos, directorios e ignorados.
@@ -40,7 +40,7 @@ class PatternEngine {
     this.compiledRegexes = this.validPatterns.map(p => this.parsePatternToRegex(p));
   }
 
-  parsePatternToRegex(pattern) {
+  parsePatternToRegex(pattern = '') {
     if (pattern instanceof RegExp) return pattern;
     const escaped = pattern
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
@@ -48,11 +48,11 @@ class PatternEngine {
     return new RegExp(`^${escaped}$`, 'i');
   }
 
-  isDirIgnored(dirName) {
+  isDirIgnored(dirName = '') {
     return this.ignoredDirs.has(dirName.toLowerCase());
   }
 
-  shouldProcessFile(filePath) {
+  shouldProcessFile(filePath = '') {
     const fileName = FileSystemUtils.getFileName(filePath);
     if (this.ignoreFiles.has(fileName)) return false;
     return this.compiledRegexes.some(regex => regex.test(fileName));

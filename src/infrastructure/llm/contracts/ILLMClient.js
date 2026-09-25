@@ -3,15 +3,15 @@
  * @abstract
  */
 class ILLMClient {
-  async connect(targetUrl) {
+  async connect(targetUrl = '') {
     throw new Error("El método 'connect()' debe ser implementado.");
   }
 
-  async generate({ prompt, fileToUpload }) {
+  async generate({ prompt = '', fileToUpload = null } = {}) {
     throw new Error("El método 'generate()' debe ser implementado.");
   }
 
-  async sendPrompt(prompt, filePath = null) {
+  async sendPrompt({ prompt = '', filePath = null } = {}) {
     throw new Error("El método 'sendPrompt()' debe ser implementado.");
   }
 
@@ -23,7 +23,7 @@ class ILLMClient {
     return 'El proveedor actual no soporta la extracción de historial visual.';
   }
 
-  async setupWebUIListener(callback) {
+  async setupWebUIListener(callback = null) {
     // Método opcional para clientes con interfaz Web UI
   }
 

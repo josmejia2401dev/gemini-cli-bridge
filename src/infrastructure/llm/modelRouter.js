@@ -3,14 +3,14 @@
  * Permite cambiar de motor (Playwright, API, Ollama) sin tocar el AgentRuntime.
  */
 class ModelRouter {
-  constructor(defaultProvider = null) {
+  constructor({ defaultProvider = null } = {}) {
     this.providers = new Map();
     if (defaultProvider) {
       this.registerProvider('default', defaultProvider);
     }
   }
 
-  registerProvider(name, provider) {
+  registerProvider(name = '', provider = null) {
     this.providers.set(name, provider);
   }
 
@@ -22,9 +22,9 @@ class ModelRouter {
     return provider;
   }
 
-  async generate(request, providerName = 'default') {
+  async generate({ prompt = '', fileToUpload = null } = {}, providerName = 'default') {
     const provider = this.getProvider(providerName);
-    return await provider.generate(request);
+    return await provider.generate({ prompt, fileToUpload });
   }
 }
 
