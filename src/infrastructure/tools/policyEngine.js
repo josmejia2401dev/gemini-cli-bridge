@@ -1,3 +1,5 @@
+const ToolDefinition = require("../../domain/agent/models/ToolDefinition");
+
 /**
  * PolicyEngine
  * Evalúa el nivel de riesgo de la ejecución de una herramienta.
@@ -5,22 +7,24 @@
  */
 class PolicyEngine {
   /**
-   * Evalúa la política de seguridad para una herramienta y sus argumentos.
-   * @param {Object} params - { toolName, args, toolDef }
-   * @returns {{ decision: 'ALLOW' | 'ASK' | 'DENY', riskLevel: string, reason: string }}
+   * Evalúa la política de seguridad para una herramienta.
+   *
+   * @param {Object} params
+   * @param {ToolDefinition} params.toolDef
+   * @returns {{
+   *   decision: 'ALLOW' | 'ASK' | 'DENY',
+   *   riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL',
+   *   reason: string
+   * }}
    */
-  evaluate({
-    toolName = '',
-    args = { path: '', content: '', command: '' },
-    toolDef = { name: '', description: '', riskLevel: 'LOW' }
-  } = {}) {
-    const riskLevel = toolDef?.riskLevel || 'LOW';
+  evaluate({ toolDef }) {
+    const { name, riskLevel } = toolDef;
 
     if (riskLevel === 'HIGH' || riskLevel === 'CRITICAL') {
       return {
         decision: 'ASK',
         riskLevel,
-        reason: `La herramienta "${toolName}" requiere autorización interactiva por tener un nivel de riesgo [${riskLevel}].`
+        reason: `La herramienta "${name}" requiere autorización interactiva por tener un nivel de riesgo [${riskLevel}].`
       };
     }
 

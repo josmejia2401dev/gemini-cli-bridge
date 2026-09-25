@@ -196,6 +196,7 @@ class ExecutionDecisionEngine {
 
     console.log('  [COMANDOS DE PLANIFICACIÓN Y CHAT]');
     console.log('  /plan <instrucción>    -> Genera un plan DAG estructurado y solicita aprobación.');
+    console.log('  /resume-task           -> Confirma una tarea resuelta manualmente, guarda la solución y reanuda el DAG original.');
     console.log('  <texto libre>          -> Consulta conversacional directa (sin plan DAG).\n');
 
     console.log('  [COMANDOS DE CHAT (Sesiones)]');

@@ -16,6 +16,10 @@ const MemoryDatabase = require('../infrastructure/persistence/db');
 const EpisodicMemory = require('../infrastructure/persistence/episodic');
 const paths = require('../shared/config/paths');
 const SYSTEM_PROMPTS = require('../shared/config/prompts');
+const ErrorAnalyzer = require('../domain/agent/errorAnalyzer');
+const Replanner = require('../domain/agent/replanner');
+const TaskDecomposer = require('../domain/agent/decomposer');
+const PolicyEngine = require('../infrastructure/tools/policyEngine');
 
 const cleanUrlString = (raw) => {
   if (!raw || typeof raw !== 'string') return 'https://gemini.google.com/app';
@@ -201,11 +205,17 @@ class Application {
   setupSigintHandler(repl = null, getLlmClient = () => null) {
     global.isProcessing = false;
     global.abortLoop = false;
+    global.awaitingUserApproval = false;
+    global.awaitingManualResolution = false;
     let sigintCount = 0;
 
     repl.rl.on('SIGINT', async () => {
       const llmClient = typeof getLlmClient === 'function' ? getLlmClient() : null;
-      if (global.isProcessing && llmClient) {
+      if (global.awaitingUserApproval) {
+        console.log('\n  🛑 [SISTEMA] Cancelando la espera de aprobación.');
+        global.abortLoop = true;
+        global.awaitingUserApproval = false;
+      } else if (global.isProcessing && llmClient) {
         console.log('\n  🛑 [SISTEMA] Interrumpiendo IA. Deteniendo generación...');
         global.abortLoop = true;
         global.isProcessing = false;
@@ -257,47 +267,34 @@ class Application {
 
     let projectRoot = await this.resolveProjectRoot(repl, isNewChat);
 
-    llmClient = LLMFactory.createClient({ type: providerType, options: {
-      sessionDir: this.sessionDir,
-      chatUrlFile: this.chatUrlFile
-    } });
+    llmClient = LLMFactory.createClient({
+      type: providerType, options: {
+        sessionDir: this.sessionDir,
+        chatUrlFile: this.chatUrlFile
+      }
+    });
 
     await llmClient.connect(targetUrl);
 
-    if (typeof llmClient.setupWebUIListener === 'function') {
-      await llmClient.setupWebUIListener(async (webInput) => {
-        if (global.isProcessing) {
-          return;
-        }
-
-        console.log(`\n  🌐 [WEB UI DETECTADO] Instrucción manual ingresada en el navegador: "${webInput}"`);
-        const decision = await decisionEngine.processInput(webInput, repl);
-
-        if (decision.skip) return;
-
-        await agentRuntime.runLoop(decision.cleanPrompt, { mode: decision.mode });
-
-        process.stdout.write('\nGemini Dev V3 > ');
-      });
-    }
-
+    const policyEngine = new PolicyEngine();
     const modelRouter = new ModelRouter({ defaultProvider: llmClient });
-
-    const toolRegistry = new ToolRegistry();
-    const dbConnection = new MemoryDatabase({});
+    const toolRegistry = new ToolRegistry({ policyEngine });
+    const dbConnection = new MemoryDatabase({ dbPath: paths.SQLITE_DB });
     const checkpointManager = new CheckpointManager({ dbConnection });
     const episodicMemory = new EpisodicMemory({ dbConnection });
-
     const decisionEngine = new ExecutionDecisionEngine({
       geminiClient: llmClient,
       projectRoot,
       dynamicCommands: this.dynamicCommands
     });
 
-    const planningSubflow = new PlanningSubflow({ modelRouter, repl });
+    const decomposer = new TaskDecomposer();
+    const replanner = new Replanner();
+    const planningSubflow = new PlanningSubflow({ modelRouter, repl, decomposer, replanner });
     const executionSubflow = new ExecutionSubflow({ toolRegistry, projectRoot, repl });
     const interpreterSubflow = new InterpreterSubflow({ toolRegistry });
-    const recoverySubflow = new RecoverySubflow({ episodicMemory });
+    const errorAnalyzer = new ErrorAnalyzer();
+    const recoverySubflow = new RecoverySubflow({ episodicMemory, errorAnalyzer });
 
     const agentRuntime = new AgentRuntime({
       modelRouter,
@@ -312,6 +309,45 @@ class Application {
       interpreterSubflow,
       recoverySubflow
     });
+
+    if (typeof llmClient.setupWebUIListener === 'function') {
+      await llmClient.setupWebUIListener(async (webInput = '') => {
+        if (
+          global.isProcessing ||
+          global.awaitingUserApproval ||
+          global.awaitingManualResolution ||
+          agentRuntime.isWaitingForManualResolution()
+        ) {
+          console.log(
+            '\n  ⏸️ [WEB UI] Entrada ignorada porque el agente está ocupado, esperando aprobación o requiere una resolución manual mediante /resume-task.'
+          );
+          return false;
+        }
+
+        console.log(
+          `\n  🌐 [WEB UI DETECTADO] Instrucción manual ingresada en el navegador: "${webInput}"`
+        );
+
+        const decision = await decisionEngine.processInput(
+          webInput,
+          repl
+        );
+
+        if (decision.skip) {
+          return false;
+        }
+
+        await agentRuntime.runLoop(
+          decision.cleanPrompt,
+          {
+            mode: decision.mode
+          }
+        );
+
+        process.stdout.write('\nGemini Dev V3 > ');
+        return true;
+      });
+    }
 
     console.log('\n===============================================================');
     console.log(`   Agente CLI V3 Listo. Usa "/help" para comandos o "/paste".`);
@@ -342,17 +378,48 @@ class Application {
     if (!isNewChat) {
       const pendingState = checkpointManager.getPendingRun();
       if (pendingState) {
+        agentRuntime.currentState = pendingState;
+
         console.log('\n  ⚠️ [SISTEMA] Se detectó una tarea anterior pendiente o interrumpida:');
         console.log(`     - Run ID: ${pendingState.runId}`);
         console.log(`     - Objetivo: "${pendingState.objective}"`);
-        console.log(`     - Estado: ${pendingState.status} (Paso ${pendingState.currentStep})\n`);
+        console.log(`     - Estado: ${pendingState.status} (Paso ${pendingState.currentStep})`);
 
-        const resumeChoice = await repl.askQuestion('  ¿Deseas reanudar esta tarea? (Y/n): ');
-        if (resumeChoice.trim().toLowerCase() !== 'n') {
-          await agentRuntime.runLoop(pendingState.objective, { pendingState, mode: 'LLM_REQUIRED' });
+        if (pendingState.hasWaitingManualResolution()) {
+          global.awaitingManualResolution = true;
+
+          const manualTask =
+            pendingState.getWaitingManualTasks()[0];
+
+          console.log(
+            `\n  👤 [RESOLUCIÓN MANUAL PENDIENTE] [${manualTask.id}] ${manualTask.description}`
+          );
+
+          console.log(
+            '  Soluciona esta tarea manualmente y ejecuta /resume-task para registrar la solución y continuar el DAG original.\n'
+          );
         } else {
-          checkpointManager.markRunCompleted(pendingState.runId, 'CANCELLED');
-          console.log('  [SISTEMA] Tarea anterior descartada.\n');
+          const resumeChoice = await repl.askQuestion(
+            '  ¿Deseas reanudar esta tarea? (Y/n): '
+          );
+
+          if (resumeChoice.trim().toLowerCase() !== 'n') {
+            await agentRuntime.runLoop(
+              pendingState.objective,
+              {
+                pendingState,
+                mode: 'LLM_REQUIRED'
+              }
+            );
+          } else {
+            checkpointManager.markRunCompleted(
+              pendingState.runId,
+              'CANCELLED'
+            );
+            console.log(
+              '  [SISTEMA] Tarea anterior descartada.\n'
+            );
+          }
         }
       }
     } else {
@@ -368,6 +435,23 @@ class Application {
 
       if (instruction.trim() === '/paste') {
         instruction = await repl.askMultiline();
+      }
+
+      const normalizedInstruction = instruction.trim().toLowerCase();
+
+      if (normalizedInstruction === '/resume-task') {
+        global.awaitingManualResolution = true;
+
+        const result = await agentRuntime.resumeManualTask();
+
+        global.awaitingManualResolution =
+          agentRuntime.isWaitingForManualResolution();
+
+        if (!result?.manualPending) {
+          console.log('');
+        }
+
+        continue;
       }
 
       const decision = await decisionEngine.processInput(instruction, repl);

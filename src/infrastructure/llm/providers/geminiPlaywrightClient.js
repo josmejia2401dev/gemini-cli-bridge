@@ -462,7 +462,7 @@ class GeminiPlaywrightClient extends ILLMClient {
 
   async attachWebObserver() {
     try {
-      await this.page.exposeFunction('__notifyAgentFromWeb', (userText) => {
+      await this.page.exposeFunction('__notifyAgentFromWeb', async (userText) => {
         if (this.isProgrammaticSending) return;
 
         const cleanText = userText ? userText.trim() : '';
@@ -477,10 +477,21 @@ class GeminiPlaywrightClient extends ILLMClient {
           return;
         }
 
+        if (typeof this.webInputCallback !== 'function') {
+          return;
+        }
+
         this.pendingWebGeneration = true;
 
-        if (typeof this.webInputCallback === 'function') {
-          this.webInputCallback(cleanText);
+        try {
+          const accepted = await this.webInputCallback(cleanText);
+
+          if (accepted === false) {
+            this.pendingWebGeneration = false;
+          }
+        } catch (error) {
+          this.pendingWebGeneration = false;
+          console.error(`\n  ⚠️ [WEB UI] No se pudo procesar la entrada detectada: ${error.message}`);
         }
       });
     } catch (e) {

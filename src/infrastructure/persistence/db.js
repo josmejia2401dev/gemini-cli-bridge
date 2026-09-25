@@ -1,9 +1,16 @@
 const Database = require('better-sqlite3');
-const paths = require('../../shared/config/paths');
 
 class MemoryDatabase {
+  /**
+   * @param {Object} [options={}] - Opciones de configuración.
+   * @param {string|null} [options.dbPath=null] - Ruta personalizada para la base de datos SQLite.
+   */
   constructor({ dbPath = null } = {}) {
-    const finalPath = dbPath || paths.SQLITE_DB;
+    const finalPath = dbPath;
+    /** 
+    * Instancia de la base de datos SQLite.
+    * @type {import('better-sqlite3').Database} 
+    */
     this.db = new Database(finalPath);
     this.db.pragma('foreign_keys = ON');
     this.initTables();

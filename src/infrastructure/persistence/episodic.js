@@ -1,6 +1,13 @@
 class EpisodicMemory {
+  /**
+ * @param {Object} [options={}] - Opciones de configuración.
+ * @param {MemoryDatabase|null} [options.dbConnection=null] - Instancia del gestor de base de datos en memoria.
+ */
   constructor({ dbConnection = null } = {}) {
-    if (!dbConnection) throw new Error('[EpisodicMemory] dbConnection es obligatorio.');
+    /** 
+    * Instancia de la base de datos SQLite.
+    * @type {import('better-sqlite3').Database} 
+    */
     this.db = dbConnection.getDb();
   }
   recordFailure(command = '', errorOutput = '', userFeedback = null) {

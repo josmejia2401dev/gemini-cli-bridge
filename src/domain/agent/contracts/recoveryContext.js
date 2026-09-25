@@ -9,16 +9,23 @@ class RecoveryContext {
     historicalSolutions = [],
     parentDAG = null,
     recoveryScopeTask = null,
+    failureSignature = '',
     executionContext = {
       source: '',
+      userFeedback: '',
       workingDirectory: '',
       environment: {},
       variables: {},
       metadata: {}
     }
   } = {}) {
-    if (!(task instanceof ExecutionTask)) throw new Error('[RecoveryContext] task debe ser ExecutionTask.');
-    if (!(result instanceof ExecutionResult)) throw new Error('[RecoveryContext] result debe ser ExecutionResult.');
+    if (!(task instanceof ExecutionTask)) {
+      throw new Error('[RecoveryContext] task debe ser ExecutionTask.');
+    }
+
+    if (!(result instanceof ExecutionResult)) {
+      throw new Error('[RecoveryContext] result debe ser ExecutionResult.');
+    }
 
     this.task = task;
     this.result = result;
@@ -26,7 +33,9 @@ class RecoveryContext {
     this.historicalSolution = historicalSolution ? String(historicalSolution).trim() : null;
     this.historicalSolutions = Object.freeze(Array.isArray(historicalSolutions) ? [...historicalSolutions] : []);
     this.parentDAG = parentDAG;
-    this.executionContext = Object.freeze({ ...executionContext });
+    this.failureSignature = String(failureSignature || '').trim();
+    this.executionContext = Object.freeze({ ...(executionContext || {}) });
+
     Object.freeze(this);
   }
 
@@ -34,44 +43,78 @@ class RecoveryContext {
     return Boolean(this.historicalSolution || this.historicalSolutions.length);
   }
 
-  buildRecoveryPrompt({ includeParentDAG = false } = {}) {
+  buildRecoveryPrompt({
+    includeParentDAG = false,
+    userFeedback = ''
+  } = {}) {
     let prompt = '[SISTEMA: RECUPERACIÓN DE EJECUCIÓN]\n';
-    prompt += 'ALCANCE OBLIGATORIO: genera un plan EXCLUSIVAMENTE para resolver la tarea fallida.\n';
-    prompt += `TAREA OBJETIVO DE RECUPERACIÓN: [${this.recoveryScopeTask.id}] "${this.recoveryScopeTask.description}"\n`;
-    if (this.task.id !== this.recoveryScopeTask.id) {
-      prompt += `PASO DE RECUPERACIÓN QUE FALLÓ: [${this.task.id}] "${this.task.description}"\n`;
-    }
-    prompt += 'IMPORTANTE: el nuevo DAG es temporal y local a la tarea objetivo de recuperación. No replantees, sustituyas ni incluyas otras tareas del DAG original. Cuando esta recuperación termine, el DAG original continuará con sus tareas pendientes.\n';
 
-    if (this.task.hasExplicitTool()) {
-      prompt += `Herramienta que falló: ${this.task.tool}\n`;
-      prompt += `Argumentos: ${JSON.stringify(this.task.args)}\n`;
+    prompt += '\n=== ALCANCE DE RECUPERACIÓN ===\n';
+    prompt += 'El plan de recuperación debe solucionar EXCLUSIVAMENTE la tarea fallida indicada abajo.\n';
+    prompt += 'No replantees el DAG original completo.\n';
+    prompt += 'No incluyas tareas no relacionadas con la recuperación de esta tarea.\n';
+    prompt += 'El DAG original permanece intacto y continuará con sus tareas pendientes cuando esta recuperación termine correctamente.\n';
+    prompt += `\nTAREA OBJETIVO: [${this.recoveryScopeTask.id}] ${this.recoveryScopeTask.description}\n`;
+
+    prompt += '\n=== EVIDENCIA DE EJECUCIÓN ===\n';
+    prompt += `TOOL: ${this.task.tool || 'N/A'}\n`;
+    prompt += `ARGS:\n${JSON.stringify(this.task.args, null, 2)}\n`;
+    prompt += `\nERROR:\n${this.result.error || 'Fallo no especificado'}\n`;
+
+    if (this.result.exitCode !== null && this.result.exitCode !== undefined) {
+      prompt += `EXIT CODE: ${this.result.exitCode}\n`;
     }
 
-    prompt += `\nERROR DE EJECUCIÓN:\n${this.result.error || 'Fallo no especificado'}\n`;
-    if (this.result.stdout) prompt += `\nSTDOUT:\n${this.result.stdout}\n`;
-    if (this.result.stderr) prompt += `\nSTDERR:\n${this.result.stderr}\n`;
-
-    if (this.executionContext && Object.keys(this.executionContext).length) {
-      prompt += `\nCONTEXTO DE EJECUCIÓN:\n${JSON.stringify(this.executionContext, null, 2)}\n`;
+    if (this.result.errorCode) {
+      prompt += `ERROR CODE: ${this.result.errorCode}\n`;
     }
+
+    if (this.result.signal) {
+      prompt += `SIGNAL: ${this.result.signal}\n`;
+    }
+
+    if (this.failureSignature) {
+      prompt += `FIRMA DEL ERROR: ${this.failureSignature}\n`;
+    }
+
+    if (this.result.stdout) {
+      prompt += `\nSTDOUT:\n${this.result.stdout}\n`;
+    }
+
+    if (this.result.stderr) {
+      prompt += `\nSTDERR:\n${this.result.stderr}\n`;
+    }
+
+    prompt += `\nCONTEXTO DE EJECUCIÓN:\n${JSON.stringify(this.executionContext, null, 2)}\n`;
+    prompt += '\n=== FEEDBACK DE MEMORIA ===\n';
 
     if (this.hasKnownSolution()) {
-      prompt += '\nSOLUCIONES CONOCIDAS EN LA MEMORIA:\n';
-      for (const solution of this.historicalSolutions) prompt += `- ${solution}\n`;
+      for (const solution of this.historicalSolutions) {
+        prompt += `- ${solution}\n`;
+      }
+
       if (this.historicalSolution && !this.historicalSolutions.includes(this.historicalSolution)) {
         prompt += `- ${this.historicalSolution}\n`;
       }
-      prompt += '\nUsa esta experiencia como feedback. Adáptala al contexto actual y verifica que sea aplicable.\n';
     } else {
-      prompt += '\nNo se encontró una solución previa utilizable. Propón una estrategia para resolver únicamente la tarea fallida.\n';
+      prompt += 'No se encontró una solución previa utilizable.\n';
+    }
+
+    if (userFeedback) {
+      prompt += `\n=== FEEDBACK ADICIONAL DEL USUARIO ===\n${String(userFeedback).trim()}\n`;
     }
 
     if (includeParentDAG && this.parentDAG && typeof this.parentDAG.toJSON === 'function') {
-      prompt += `\nDAG ORIGINAL (SOLO CONTEXTO, NO MODIFICAR NI REPLANIFICAR):\n${JSON.stringify(this.parentDAG.toJSON(), null, 2)}\n`;
+      prompt += '\n=== DAG ORIGINAL: SOLO CONTEXTO ===\n';
+      prompt += 'NO modificar, sustituir ni replanificar las demás tareas del DAG original.\n';
+      prompt += `${JSON.stringify(this.parentDAG.toJSON(), null, 2)}\n`;
     }
 
-    prompt += '\nGenera únicamente un nuevo DAG de recuperación para solucionar esta tarea fallida. No incluyas tareas ajenas al objetivo de recuperación. Requiere aprobación del usuario antes de ejecutarse.';
+    prompt += '\n=== INSTRUCCIÓN PARA PLANNING ===\n';
+    prompt += 'Genera únicamente un DAG de recuperación para resolver la TAREA OBJETIVO.\n';
+    prompt += 'Todas las subtareas deben estar directamente justificadas por la solución de esta tarea.\n';
+    prompt += 'El DAG de recuperación requiere aprobación explícita del usuario antes de ejecutarse.\n';
+
     return prompt;
   }
 }
